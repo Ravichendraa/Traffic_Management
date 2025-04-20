@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Vehicle Detection Pro</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, rgba(30, 60, 114, 0.8), rgba(42, 82, 152, 0.8)), url('https://images.unsplash.com/photo-1519750783829-e1c0b0f0f7a8?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80') no-repeat center center fixed;
+            background-size: cover;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .dropzone {
+            border: 4px dashed #ffffff; padding: 50px; text-align: center; background: rgba(255, 255, 255, 0.15);
+            border-radius: 20px; transition: all 0.4s ease; cursor: pointer; position: relative; overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+        .dropzone.dragover { background: rgba(255, 255, 255, 0.3); border-color: #00ffcc; transform: scale(1.03); box-shadow: 0 0 30px rgba(0, 255, 204, 0.6); }
+        .dropzone.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        .dropzone::before {
+            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.2), transparent);
+            transition: all 0.5s ease; opacity: 0;
+        }
+        .dropzone.dragover::before { opacity: 1; transform: translate(25%, 25%); }
+        .loader {
+            border: 6px solid rgba(255, 255, 255, 0.3); border-top: 6px solid #00ffcc; border-radius: 50%;
+            width: 60px; height: 60px; animation: spin 1s linear infinite; margin: 20px auto; display: none;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .progress-bar {
+            height: 10px; width: 100%; background-color: rgba(255, 255, 255, 0.2); border-radius: 15px;
+            overflow: hidden; margin: 20px 0; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        .progress-fill {
+            height: 100%; background: linear-gradient(90deg, #00ffcc, #00ccff); width: 0%; transition: width 0.5s ease;
+            border-radius: 15px; box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        .status-text { font-size: 1.5rem; font-weight: 700; text-align: center; margin: 15px 0; text-shadow: 0 3px 6px rgba(0, 0, 0, 0.3); }
+        .download-btn, .action-btn {
+            display: inline-block; padding: 14px 28px; background: linear-gradient(45deg, #00ffcc, #00ccff);
+            color: #1e3c72; font-weight: bold; border-radius: 50px; text-decoration: none; margin: 10px;
+            transition: all 0.3s ease; box-shadow: 0 6px 15px rgba(0, 255, 204, 0.5); border: none; cursor: pointer;
+            position: relative; overflow: hidden;
+        }
+        .download-btn:hover, .action-btn:hover {
+            transform: translateY(-4px); box-shadow: 0 10px 25px rgba(0, 255, 204, 0.7); background: linear-gradient(45deg, #00ccff, #00ffcc);
+        }
+        .download-btn i, .action-btn i { margin-right: 10px; }
+        .select-btn {
+            padding: 14px 28px; background: rgba(255, 255, 255, 0.95); color: #1e3c72; font-weight: bold;
+            border-radius: 50px; border: none; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2);
+        }
+        .select-btn:hover { background: white; transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3); }
+        h1 { text-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); position: relative; display: inline-block; }
+        h1:after {
+            content: ''; position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%);
+            width: 100px; height: 5px; background: #00ffcc; border-radius: 3px; animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+        #polygon-section { display: none; width: 100%; max-width: 700px; margin: 20px auto; }
+        #polygon-input {
+            width: 100%; padding: 15px; border-radius: 10px; background: rgba(255, 255, 255, 0.9); color: #333;
+            font-size: 1.1rem; resize: vertical; min-height: 120px; border: 3px solid #00ffcc; transition: all 0.3s ease;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        #polygon-input:focus { outline: none; border-color: #00ccff; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
+        .steps-container {
+            display: flex; justify-content: space-between; margin-bottom: 30px; flex-wrap: wrap; gap: 15px;
+        }
+        .step-box {
+            flex: 1; min-width: 150px; background: rgba(0, 0, 0, 0.4); padding: 20px; border-radius: 15px;
+            text-align: center; transition: all 0.3s ease; position: relative; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
+        }
+        .step-box.active { background: rgba(0, 255, 204, 0.2); box-shadow: 0 0 20px rgba(0, 255, 204, 0.5); }
+        .step-box i { font-size: 2rem; margin-bottom: 10px; color: #00ffcc; }
+        .step-box p { font-size: 1rem; font-weight: 600; }
+        .step-box .check {
+            position: absolute; top: 10px; right: 10px; font-size: 1.5rem; color: #00ffcc;
+            opacity: 0; transition: opacity 0.4s ease, transform 0.4s ease;
+        }
+        .step-box.active .check { opacity: 1; transform: scale(1.2); }
+        .animate-fade-in { animation: fadeIn 0.6s ease forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        .format-warning {
+            display: none; background-color: rgba(255, 100, 100, 0.3); border: 2px solid rgba(255, 100, 100, 0.6);
+            color: #ffecec; padding: 12px 18px; border-radius: 10px; margin-top: 15px; font-size: 1rem; text-align: center;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        .success-message {
+            display: none; text-align: center; font-size: 2rem; font-weight: bold; color: #00ffcc;
+            text-shadow: 0 4px 12px rgba(0, 255, 204, 0.5); margin: 20px 0; animation: popIn 0.5s ease;
+        }
+        @keyframes popIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div class="container flex flex-col items-center justify-center py-12">
+        <h1 class="text-6xl font-bold mb-16 text-white animate-fade-in">Advanced Vehicle Detection Pro</h1>
+        
+        <div id="dropzone" class="dropzone w-full md:w-3/4 lg:w-2/3 animate-fade-in" style="animation-delay: 0.1s">
+            <p class="text-3xl mb-3 font-semibold">Drag & Drop Your Video Here</p>
+            <p class="text-lg mb-6 opacity-80">or</p>
+            <input type="file" id="fileInput" accept="video/*" class="hidden">
+            <button id="selectBtn" class="select-btn"><i class="fas fa-file-video"></i> Select Video</button>
+            <p id="processing-message" class="hidden mt-4 text-red-300 font-medium">A video is already processing. Please wait!</p>
+            <div id="format-warning" class="format-warning mt-4">
+                <i class="fas fa-exclamation-circle mr-2"></i> For best results, use MP4 files with H.264 encoding.
+            </div>
+        </div>
+
+        <div id="polygon-section" class="animate-fade-in">
+            <div class="steps-container">
+                <div class="step-box" id="step1">
+                    <i class="fas fa-upload"></i>
+                    <p>Upload Video</p>
+                    <i class="fas fa-check check"></i>
+                </div>
+                <div class="step-box" id="step2">
+                    <i class="fas fa-draw-polygon"></i>
+                    <p>Enter Detection Area</p>
+                    <i class="fas fa-check check"></i>
+                </div>
+                <div class="step-box" id="step3">
+                    <i class="fas fa-cogs"></i>
+                    <p>Processing</p>
+                    <i class="fas fa-check check"></i>
+                </div>
+                <div class="step-box" id="step4">
+                    <i class="fas fa-chart-bar"></i>
+                    <p>Results</p>
+                    <i class="fas fa-check check"></i>
+                </div>
+            </div>
+            <div class="instructions">
+                <p class="text-center mb-4">1. Click "Download First Frame" to get the first frame as a .jpg file.</p>
+                <p class="text-center mb-4">2. Visit <a href="https://polygonzone.roboflow.com/" target="_blank" class="text-blue-300 underline hover:text-blue-200">PolygonZone</a>, upload the frame, draw a polygon, and copy the points.</p>
+                <p class="text-center mb-4">3. Paste the polygon points below and click "Confirm & Process".</p>
+            </div>
+            <button id="download-frame-btn" class="action-btn"><i class="fas fa-download"></i> Download First Frame</button>
+            <label for="polygon-input" class="text-xl font-semibold mb-3 block text-center mt-6">Enter Polygon Points:</label>
+            <textarea id="polygon-input" placeholder="[[615, 504], [1064, 1052], [1905, 1062], [1912, 650], [1309, 502], [1235, 480]]"></textarea>
+            <button id="submit-polygon" class="action-btn mt-4"><i class="fas fa-check"></i> Confirm & Process</button>
+        </div>
+
+        <div id="progress-container" class="w-full md:w-3/4 lg:w-2/3 mt-8 hidden animate-fade-in">
+            <div class="status-text" id="status">Uploading...</div>
+            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+            <div id="progress-percentage" class="text-center mt-3 text-lg font-medium">0%</div>
+            <div id="time-estimate" class="text-center mt-2 text-sm opacity-80">Estimated time remaining: Calculating...</div>
+            <div id="loader" class="loader"></div>
+        </div>
+
+        <div id="success-message" class="success-message">Processing Complete! 🎉</div>
+        <div id="result" class="w-full animate-fade-in hidden"></div>
+        <div id="video-section" class="w-full animate-fade-in hidden"></div>
+    </div>
+
+    <script>
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const selectBtn = document.getElementById('selectBtn');
+        const statusDiv = document.getElementById('status');
+        const loader = document.getElementById('loader');
+        const resultDiv = document.getElementById('result');
+        const videoSection = document.getElementById('video-section');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressPercentage = document.getElementById('progress-percentage');
+        const processingMessage = document.getElementById('processing-message');
+        const timeEstimate = document.getElementById('time-estimate');
+        const polygonSection = document.getElementById('polygon-section');
+        const polygonInput = document.getElementById('polygon-input');
+        const submitPolygonBtn = document.getElementById('submit-polygon');
+        const downloadFrameBtn = document.getElementById('download-frame-btn');
+        const successMessage = document.getElementById('success-message');
+        const steps = [document.getElementById('step1'), document.getElementById('step2'), document.getElementById('step3'), document.getElementById('step4')];
+
+        let isProcessing = false;
+        let startTime = 0;
+        let elapsedTimeInterval;
+        let selectedFile = null;
+
+        dropzone.addEventListener('dragover', e => { e.preventDefault(); if (!isProcessing) dropzone.classList.add('dragover'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+        dropzone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (isProcessing) {
+                processingMessage.classList.remove('hidden');
+                setTimeout(() => processingMessage.classList.add('hidden'), 3000);
+                return;
+            }
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFileSelection(files[0]);
+        });
+
+        selectBtn.addEventListener('click', () => {
+            if (isProcessing) {
+                processingMessage.classList.remove('hidden');
+                setTimeout(() => processingMessage.classList.add('hidden'), 3000);
+                return;
+            }
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', function() {
+            if (this.files.length > 0) handleFileSelection(this.files[0]);
+        });
+
+        function handleFileSelection(file) {
+            if (!file.type.startsWith('video/')) { alert("Please select a valid video file."); return; }
+            selectedFile = file;
+            if (file.type !== 'video/mp4') document.getElementById('format-warning').style.display = 'block';
+            else document.getElementById('format-warning').style.display = 'none';
+            dropzone.classList.add('hidden');
+            polygonSection.style.display = 'block';
+            statusDiv.textContent = "Step 1 Complete! Now download the first frame.";
+            steps[0].classList.add('active');
+        }
+
+        downloadFrameBtn.addEventListener('click', async () => {
+            if (!selectedFile) {
+                statusDiv.textContent = "Please upload a video first.";
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+
+            try {
+                const response = await fetch('/get-first-frame', { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    statusDiv.textContent = errorData.error;
+                    return;
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${selectedFile.name.split('.')[0]}_first_frame.jpg`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                statusDiv.textContent = "Step 2 Complete! Upload the frame to PolygonZone.";
+                steps[1].classList.add('active');
+            } catch (error) {
+                statusDiv.textContent = "Failed to download first frame. Please try again.";
+            }
+        });
+
+        submitPolygonBtn.addEventListener('click', async () => {
+            const polygonPoints = polygonInput.value.trim();
+            if (!selectedFile || !polygonPoints) {
+                statusDiv.textContent = "Please upload a video and enter polygon points.";
+                return;
+            }
+
+            steps[2].classList.add('active');
+
+            isProcessing = true;
+            startTime = new Date().getTime();
+            elapsedTimeInterval = setInterval(updateElapsedTime, 1000);
+
+            polygonSection.style.display = 'none';
+            progressContainer.classList.remove('hidden');
+            statusDiv.textContent = "Uploading...";
+            loader.style.display = "block";
+
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+            formData.append('polygon_points', polygonPoints);
+
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.error) {
+                    statusDiv.textContent = data.error;
+                    loader.style.display = "none";
+                    resetInterface();
+                    return;
+                }
+                statusDiv.textContent = "Processing...";
+                checkStatus(data.filename);
+            } catch (error) {
+                statusDiv.textContent = "Upload failed. Please try again.";
+                loader.style.display = "none";
+                resetInterface();
+            }
+        });
+
+        async function checkStatus(filename) {
+            const interval = setInterval(async () => {
+                const response = await fetch('/status');
+                const statusData = await response.json();
+
+                progressFill.style.width = statusData.progress + '%';
+                progressPercentage.textContent = statusData.progress + '%';
+
+                if (statusData.status === "complete") {
+                    clearInterval(interval);
+                    clearInterval(elapsedTimeInterval);
+                    loader.style.display = "none";
+                    progressContainer.classList.add('hidden');
+                    statusDiv.textContent = "";
+                    steps[3].classList.add('active');
+                    successMessage.style.display = 'block';
+                    setTimeout(() => successMessage.style.display = 'none', 3000);
+                    showResults(filename, statusData.summary);
+                } else {
+                    statusDiv.textContent = `Processing... (${statusData.progress}%)`;
+                    const elapsed = new Date().getTime() - startTime;
+                    const estimated = (elapsed / statusData.progress) * (100 - statusData.progress);
+                    if (statusData.progress > 5) timeEstimate.textContent = `Estimated time remaining: ${formatTime(estimated)}`;
+                }
+            }, 1000);
+        }
+
+        function updateElapsedTime() {
+            const elapsed = new Date().getTime() - startTime;
+            // No time-counter element in this simplified version
+        }
+
+        function formatTime(ms) {
+            if (ms < 1000) return `${ms}ms`;
+            if (ms < 60000) return `${Math.floor(ms / 1000)}s`;
+            return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+        }
+
+        function showResults(filename, summary) {
+            resultDiv.innerHTML = summary;
+            resultDiv.classList.remove('hidden');
+
+            const videoContainerHtml = `
+                <div class="text-center animate-fade-in mt-10">
+                    <h3 class="text-2xl font-bold mb-6"><i class="fas fa-check-circle mr-2"></i>Ready to Download!</h3>
+                    <a href="/outputs/${filename}" download class="download-btn"><i class="fas fa-download"></i> Download Processed Video</a>
+                </div>
+            `;
+            videoSection.innerHTML = videoContainerHtml;
+            videoSection.classList.remove('hidden');
+
+            const analyzeAnother = document.createElement('div');
+            analyzeAnother.className = 'text-center mt-12';
+            analyzeAnother.innerHTML = `<button class="action-btn"><i class="fas fa-sync-alt mr-2"></i> Analyze Another Video</button>`;
+            analyzeAnother.querySelector('button').addEventListener('click', resetInterface);
+            videoSection.appendChild(analyzeAnother);
+
+            isProcessing = false;
+        }
+
+        function resetInterface() {
+            dropzone.classList.remove('hidden');
+            polygonSection.style.display = 'none';
+            resultDiv.classList.add('hidden');
+            videoSection.classList.add('hidden');
+            progressContainer.classList.add('hidden');
+            successMessage.style.display = 'none';
+            isProcessing = false;
+            selectedFile = null;
+            clearInterval(elapsedTimeInterval);
+            steps.forEach(step => step.classList.remove('active'));
+            statusDiv.textContent = "";
+        }
+    </script>
+</body>
+</html>
