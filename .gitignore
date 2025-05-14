@@ -1,0 +1,7 @@
+./models
+./outputs
+app.log
+./uploads
+yolo12_100epoch.pt
+yolov8n.pt
+aap.ipynb

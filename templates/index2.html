@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Vehicle Detection Pro</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Background and Fonts */
+        body {
+            background: linear-gradient(135deg, rgba(30, 60, 114, 0.8), rgba(42, 82, 152, 0.8)), url('https://images.unsplash.com/photo-1519750783829-e1c0b0f0f7a8?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80') no-repeat center center fixed;
+            background-size: cover;
+            font-family: 'Arial', sans-serif;
+            color: white;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Dropzone */
+        .dropzone {
+            border: 4px dashed #ffffff;
+            padding: 50px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            transition: all 0.4s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .dropzone.dragover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: #00ffcc;
+            transform: scale(1.03);
+            box-shadow: 0 0 30px rgba(0, 255, 204, 0.6);
+        }
+
+        .dropzone.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Loader */
+        .loader {
+            border: 6px solid rgba(255, 255, 255, 0.3);
+            border-top: 6px solid #00ffcc;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            height: 10px;
+            width: 100%;
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 20px 0;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ffcc, #00ccff);
+            width: 0%;
+            transition: width 0.5s ease;
+            border-radius: 15px;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .status-text {
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-align: center;
+            margin: 15px 0;
+            text-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Buttons */
+        .select-btn, .action-btn {
+            display: inline-block;
+            padding: 14px 28px;
+            background: linear-gradient(45deg, #00ffcc, #00ccff);
+            color: #1e3c72;
+            font-weight: bold;
+            border-radius: 50px;
+            text-decoration: none;
+            margin: 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 6px 15px rgba(0, 255, 204, 0.5);
+            border: none;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .select-btn:hover, .action-btn:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 25px rgba(0, 255, 204, 0.7);
+        }
+
+        .select-btn i, .action-btn i { margin-right: 10px; }
+
+        /* Results Section */
+        .results-container {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        /* Error Messages */
+        .error-message {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container flex flex-col items-center justify-center py-12">
+        <h1 class="text-6xl font-bold mb-16 text-white">Advanced Vehicle Detection Pro</h1>
+        
+        <div id="dropzone" class="dropzone w-full md:w-3/4 lg:w-2/3">
+            <p class="text-3xl mb-3 font-semibold">Drag & Drop Your Video Here</p>
+            <p class="text-lg mb-6 opacity-80">or</p>
+            <input type="file" id="fileInput" accept="video/*" class="hidden">
+            <button id="selectBtn" class="select-btn"><i class="fas fa-file-video"></i> Select Video</button>
+            <div id="error-message" class="error-message"></div>
+        </div>
+
+        <div id="progress-container" class="w-full md:w-3/4 lg:w-2/3 mt-8 hidden">
+            <div class="status-text" id="status">Uploading...</div>
+            <div class="progress-bar">
+                <div id="progress-fill" class="progress-fill"></div>
+            </div>
+            <div id="progress-percentage" class="text-center mt-3 text-lg font-medium">0%</div>
+            <div id="loader" class="loader"></div>
+        </div>
+        
+        <div id="result" class="w-full hidden results-container"></div>
+        <div id="video-section" class="w-full hidden results-container"></div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const selectBtn = document.getElementById('selectBtn');
+        const statusDiv = document.getElementById('status');
+        const resultDiv = document.getElementById('result');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressPercentage = document.getElementById('progress-percentage');
+        const loader = document.getElementById('loader');
+        const videoSection = document.getElementById('video-section');
+        const errorMessage = document.getElementById('error-message');
+
+        let selectedFile = null;
+        let isProcessing = false;
+
+        // Event Listeners
+        dropzone.addEventListener('dragover', e => {
+            e.preventDefault();
+            if (!isProcessing) {
+                dropzone.classList.add('dragover');
+            }
+        });
+
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+
+        dropzone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (!isProcessing) {
+                const files = e.dataTransfer.files;
+                if (files.length > 0) handleFileSelection(files[0]);
+            }
+        });
+
+        selectBtn.addEventListener('click', () => {
+            if (!isProcessing) {
+                fileInput.click();
+            }
+        });
+
+        fileInput.addEventListener('change', function() {
+            if (this.files.length > 0) handleFileSelection(this.files[0]);
+        });
+
+        // File Handling Functions
+        function handleFileSelection(file) {
+            if (!file.type.startsWith('video/')) {
+                showError("Please select a valid video file.");
+                return;
+            }
+
+            if (file.size > 100 * 1024 * 1024) { // 100MB limit
+                showError("File size should be less than 100MB");
+                return;
+            }
+
+            selectedFile = file;
+            dropzone.classList.add('hidden');
+            progressContainer.classList.remove('hidden');
+            uploadFile(file);
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
+        function uploadFile(file) {
+            isProcessing = true;
+            const formData = new FormData();
+            formData.append('video', file);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload', true);
+
+            xhr.upload.addEventListener('progress', e => {
+                if (e.lengthComputable) {
+                    const percentComplete = (e.loaded / e.total) * 100;
+                    progressFill.style.width = percentComplete + '%';
+                    progressPercentage.textContent = Math.round(percentComplete) + '%';
+                }
+            });
+
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    if (xhr.status === 200) {
+                        handleResponse(xhr.responseText);
+                    } else {
+                        showError("Error uploading file. Please try again.");
+                        resetUI();
+                    }
+                }
+            };
+
+            xhr.send(formData);
+        }
+
+        function handleResponse(response) {
+            try {
+                const data = JSON.parse(response);
+                if (data.success) {
+                    statusDiv.textContent = "Processing Complete!";
+                    progressFill.style.width = '100%';
+                    progressPercentage.textContent = '100%';
+                    loader.style.display = 'none';
+                    displayResults(data.results);
+                } else {
+                    showError(data.message || "Error processing video. Please try again.");
+                    resetUI();
+                }
+            } catch (error) {
+                showError("Error processing server response");
+                resetUI();
+            }
+        }
+
+        function displayResults(results) {
+            resultDiv.classList.remove('hidden');
+            // Add your results display logic here
+        }
+
+        function resetUI() {
+            isProcessing = false;
+            selectedFile = null;
+            dropzone.classList.remove('hidden');
+            progressContainer.classList.add('hidden');
+            progressFill.style.width = '0%';
+            progressPercentage.textContent = '0%';
+            loader.style.display = 'none';
+            resultDiv.classList.add('hidden');
+            videoSection.classList.add('hidden');
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>

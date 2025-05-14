@@ -1,206 +1,460 @@
 from flask import Flask, request, render_template, jsonify, send_from_directory, send_file
 import os
-import numpy as np
-import supervision as sv
-from ultralytics import YOLO
-from collections import defaultdict
-import torch
 import threading
-import ast
 import cv2
-from io import BytesIO
+import numpy as np
+import ast
+import time
+import tempfile
+import logging
+import io
+from collections import defaultdict
+from ultralytics import YOLO
+from supervision import PolygonZone, BoxAnnotator, LabelAnnotator, TraceAnnotator, ByteTrack, Color, Point
+import supervision as sv
+import torch
 
+# Initialize Flask app
 app = Flask(__name__)
-UPLOAD_FOLDER = "uploads"
-OUTPUT_FOLDER = "outputs"
+
+# Configuration
+UPLOAD_FOLDER = 'uploads'
+OUTPUT_FOLDER = 'outputs'
+MODEL_FOLDER = 'models'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(MODEL_FOLDER, exist_ok=True)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+# Setup logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-model = YOLO("R:/BTP_WEBSITE/yolo12_100epoch.pt").to(device) 
+# Device setup
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+logger.info(f"Using device: {device}")
 
-SELECTED_CLASS_NAMES = ['Auto-Rickshaw', 'Bicycle', 'Bus', 'Car', 'Cycle-Rickshaw', 'E-Rickshaw', 'Motorcycle', 'Tractor', 'Truck']
+# Load YOLO model
+try:
+    model_path = os.path.join(MODEL_FOLDER, 'yolo12_100epoch.pt')
+    model = YOLO(model_path).to(device)
+except Exception as e:
+    logger.error(f"Failed to load YOLO model: {str(e)}")
+    raise e
+
+# Class names and IDs
+SELECTED_CLASS_NAMES = [
+    'Auto-Rickshaw', 'Bicycle', 'Bus', 'Car', 'Cycle_rickshaw',
+    'E-Rickshaw', 'Motorcycle', 'Tractor', 'Truck'
+]
 name_to_id = {name: id for id, name in model.model.names.items()}
 SELECTED_CLASS_IDS = [name_to_id[cls] for cls in SELECTED_CLASS_NAMES if cls in name_to_id]
-print(f"Selected Class IDs: {SELECTED_CLASS_IDS}")
+logger.info(f"Selected Class IDs: {SELECTED_CLASS_IDS}")
 
-total_vehicles = defaultdict(set)
-current_frame_vehicles = set()
-processing_status = {"status": "idle", "progress": 0}
-byte_tracker = None
-polygon_zone = None
-zone_annotator = None
+# Global state
+progress = {'status': 'idle', 'progress': 0, 'summary': {}, 'live_counts': {}}
+lock = threading.Lock()
 
-def initialize_tracker_and_zone(points):
-    global byte_tracker, polygon_zone, zone_annotator
-    byte_tracker = sv.ByteTrack(
+# Annotators
+box_annotator = BoxAnnotator(thickness=2, color=Color.RED)
+label_annotator = LabelAnnotator(text_thickness=1, text_scale=0.5, text_color=Color.WHITE)
+trace_annotator = TraceAnnotator(thickness=2, trace_length=50, color=Color.GREEN)
+
+def initialize_tracker():
+    """Initialize ByteTrack for vehicle tracking."""
+    return ByteTrack(
         track_activation_threshold=0.25,
         lost_track_buffer=30,
         minimum_matching_threshold=0.8,
         frame_rate=30,
         minimum_consecutive_frames=3
     )
-    polygon_zone = sv.PolygonZone(polygon=np.array(points))
-    zone_annotator = sv.PolygonZoneAnnotator(zone=polygon_zone, color=sv.Color.BLUE, thickness=2)
-
-box_annotator = sv.BoxAnnotator(thickness=2, color=sv.Color.RED)
-label_annotator = sv.LabelAnnotator(text_thickness=1, text_scale=0.5, text_color=sv.Color.WHITE)
-trace_annotator = sv.TraceAnnotator(thickness=2, trace_length=50, color=sv.Color.GREEN)
-
-def process_video(source_path, target_path, user_polygon_points):
-    global total_vehicles, current_frame_vehicles, processing_status
-    
-    total_vehicles = defaultdict(set)
-    current_frame_vehicles = set()
-    processing_status["status"] = "processing"
-    processing_status["progress"] = 0
-
-    initialize_tracker_and_zone(user_polygon_points)
-    byte_tracker.reset()
-
-    video_info = sv.VideoInfo.from_video_path(source_path)
-    total_frames = video_info.total_frames
-
-    def callback(frame: np.ndarray, index: int) -> np.ndarray:
-        global total_vehicles, current_frame_vehicles, processing_status
-
-        results = model(frame, verbose=False, device=device)[0]
-        detections = sv.Detections.from_ultralytics(results)
-        detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
-        detections = byte_tracker.update_with_detections(detections=detections)
-
-        in_zone_mask = polygon_zone.trigger(detections=detections)
-        detections_in_zone = detections[in_zone_mask]
-
-        current_ids = detections_in_zone.tracker_id.astype(int).tolist()
-        current_frame_vehicles = set(current_ids)
-
-        for class_id, tracker_id in zip(detections_in_zone.class_id, current_ids):
-            total_vehicles[model.model.names[class_id]].add(tracker_id)
-
-        labels = [
-            f"#{tracker_id} {model.model.names[class_id]} {confidence:0.2f}"
-            for confidence, class_id, tracker_id
-            in zip(detections_in_zone.confidence, detections_in_zone.class_id, current_ids)
-        ]
-
-        annotated_frame = frame.copy()
-        annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
-        annotated_frame = box_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
-        annotated_frame = label_annotator.annotate(scene=annotated_frame, detections=detections_in_zone, labels=labels)
-        annotated_frame = zone_annotator.annotate(scene=annotated_frame)
-
-        count_text = f"Current: {len(current_frame_vehicles)} | Total: {sum(len(v) for v in total_vehicles.values())}"
-        annotated_frame = sv.draw_text(
-            scene=annotated_frame,
-            text=count_text,
-            text_anchor=sv.Point(50, 50),
-            text_color=sv.Color.WHITE,
-            background_color=sv.Color.BLACK,
-            text_thickness=1,
-            text_scale=0.8
-        )
-
-        processing_status["progress"] = int((index / total_frames) * 100)
-        return annotated_frame
-
-    sv.process_video(source_path=source_path, target_path=target_path, callback=callback)
-    processing_status["status"] = "complete"
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
-def upload_video():
-    file = request.files['video']
-    polygon_input = request.form.get('polygon_points', '[[615, 504], [1064, 1052], [1905, 1062], [1912, 650], [1309, 502], [1235, 480]]')
-    source_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    target_path = os.path.join(OUTPUT_FOLDER, "detected_" + file.filename)
-    file.save(source_path)
+def upload_file():
+    global progress
+    if 'file' not in request.files:
+        logger.error("No file part in request")
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        logger.error("No selected file")
+        return jsonify({'error': 'No selected file'}), 400
+
+    media_type = request.form.get('media_type')
+    if media_type not in ['image', 'video']:
+        logger.error(f"Invalid media_type: {media_type}")
+        return jsonify({'error': 'Invalid media_type'}), 400
 
     try:
-        user_polygon_points = ast.literal_eval(polygon_input)
-        user_polygon_points = np.array(user_polygon_points)
-    except (ValueError, SyntaxError):
-        return jsonify({"error": "Invalid polygon points format. Use: [[x1, y1], [x2, y2], ...]"}), 400
+        left_line = float(request.form.get('left_line', 0))
+        start_line = ast.literal_eval(request.form.get('start_line', '[[0,0],[0,0]]'))
+        end_line = ast.literal_eval(request.form.get('end_line', '[[0,0],[0,0]]'))
+        distance = float(request.form.get('distance', 10)) if media_type == 'video' else 0
+    except (ValueError, SyntaxError, TypeError) as e:
+        logger.error(f"Invalid coordinate or distance format: {str(e)}")
+        return jsonify({'error': 'Invalid coordinate or distance format'}), 400
 
-    thread = threading.Thread(target=process_video, args=(source_path, target_path, user_polygon_points))
+    # Validate coordinates
+    if not (isinstance(start_line, list) and isinstance(end_line, list) and
+            len(start_line) == 2 and len(end_line) == 2 and
+            all(isinstance(p, list) and len(p) == 2 for p in start_line + end_line)):
+        logger.error("Invalid line points format")
+        return jsonify({'error': 'Start and end lines must be [[x1,y1], [x2,y2]]'}), 400
+
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(file_path)
+
+    output_filename = f"processed_{file.filename}"
+    with lock:
+        progress = {'status': 'processing', 'progress': 0, 'summary': {}, 'live_counts': {}}
+
+    thread = threading.Thread(
+        target=process_media,
+        args=(file_path, media_type, left_line, start_line, end_line, distance, output_filename)
+    )
     thread.start()
 
-    return jsonify({"message": "Processing started", "filename": "detected_" + file.filename})
+    logger.info(f"Started processing {media_type}: {file.filename}")
+    return jsonify({'filename': output_filename})
 
-@app.route('/status')
-def get_status():
-    global processing_status, total_vehicles
-    if processing_status["status"] == "complete":
-        summary_table = (
-            "<div style='width: 90%; max-width: 1000px; margin: 30px auto;'>"
-            "<h2 style='text-align: center; font-size: 1.75rem; font-weight: bold; color: #fff; margin-bottom: 20px;'>Vehicle Count Summary</h2>"
-            "<table style='width: 100%; border-collapse: collapse; background: rgba(255, 255, 255, 0.95); border-radius: 12px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);'>"
-            "<thead>"
-            "<tr style='background: #00ffcc; color: #000;'>"
-            "<th style='padding: 20px; font-size: 1.2rem; border: 1px solid #ddd; color: #000;'>Vehicle Type</th>"
-            "<th style='padding: 20px; font-size: 1.2rem; border: 1px solid #ddd; color: #000;'>Count</th>"
-            "</tr>"
-            "</thead>"
-            "<tbody>"
-        )
-        total_count = sum(len(v) for v in total_vehicles.values())
-        for vehicle_class in SELECTED_CLASS_NAMES:
-            count = len(total_vehicles.get(vehicle_class, set()))
-            summary_table += (
-                f"<tr style='transition: background 0.3s;'>"
-                f"<td style='padding: 20px; font-size: 1.1rem; border: 1px solid #ddd; color: #000;'>{vehicle_class}</td>"
-                f"<td style='padding: 20px; font-size: 1.1rem; border: 1px solid #ddd; color: #000;'>{count}</td>"
-                f"</tr>"
+def process_media(file_path, media_type, left_line, start_line, end_line, distance, output_filename):
+    global progress
+    try:
+        if media_type == 'image':
+            summary = process_image(file_path, left_line, start_line, end_line)
+            output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+            cv2.imwrite(output_path, summary['image'])
+            with lock:
+                progress = {
+                    'status': 'complete',
+                    'progress': 100,
+                    'summary': summary['counts'],
+                    'live_counts': {}
+                }
+        else:
+            summary = process_video(file_path, left_line, start_line, end_line, distance, output_filename)
+            summary['video_writer'].release()
+            with lock:
+                progress = {
+                    'status': 'complete',
+                    'progress': 100,
+                    'summary': summary['counts'],
+                    'live_counts': summary['live_counts']
+                }
+        logger.info(f"Completed processing {media_type}: {file_path}")
+    except Exception as e:
+        logger.error(f"Processing error for {file_path}: {str(e)}")
+        with lock:
+            progress = {
+                'status': 'error',
+                'progress': 0,
+                'summary': {'error': str(e)},
+                'live_counts': {}
+            }
+    finally:
+        if os.path.exists(file_path):
+            try:
+                os.unlink(file_path)
+                logger.debug(f"Cleaned up file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to unlink file {file_path}: {str(e)}")
+
+def process_image(image_path, left_line, start_line, end_line):
+    """Process an image to count vehicles in the specified region."""
+    image = cv2.imread(image_path)
+    if image is None:
+        logger.error(f"Failed to load image: {image_path}")
+        raise ValueError('Failed to load image')
+
+    height, width = image.shape[:2]
+    # Create polygon from start_line and end_line
+    polygon = np.array([start_line[0], start_line[1], end_line[1], end_line[0]], dtype=np.int32)
+    zone = PolygonZone(polygon=polygon)
+    zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=Color.BLUE, thickness=2)
+
+    results = model(image, verbose=False, device=device)[0]
+    detections = sv.Detections.from_ultralytics(results)
+    detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
+
+    # Filter detections by left_line and polygon zone
+    in_zone_mask = zone.trigger(detections=detections)
+    left_mask = detections.xyxy[:, 0] >= left_line
+    valid_mask = in_zone_mask & left_mask
+    detections = detections[valid_mask]
+
+    counts = defaultdict(int)
+    for class_id in detections.class_id:
+        class_name = model.model.names[class_id]
+        counts[class_name] += 1
+
+    # Annotate image
+    labels = [
+        f"{model.model.names[class_id]} {conf:.2f}"
+        for class_id, conf in zip(detections.class_id, detections.confidence)
+    ]
+    annotated_image = image.copy()
+    annotated_image = trace_annotator.annotate(scene=annotated_image, detections=detections)
+    annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections)
+    annotated_image = label_annotator.annotate(
+        scene=annotated_image, detections=detections, labels=labels
+    )
+    annotated_image = zone_annotator.annotate(scene=annotated_image)
+
+    # Draw left line
+    cv2.line(annotated_image, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
+
+    # Add count text
+    total_count = sum(counts.values())
+    count_text = f"Total: {total_count}"
+    annotated_image = sv.draw_text(
+        scene=annotated_image,
+        text=count_text,
+        text_anchor=Point(50, 50),
+        text_color=Color.WHITE,
+        background_color=Color.BLACK,
+        text_thickness=1,
+        text_scale=0.8
+    )
+
+    logger.debug(f"Image processed, counts: {dict(counts)}")
+    return {'image': annotated_image, 'counts': {k: {'count': v, 'average_speed': 0} for k, v in counts.items()}}
+
+def process_video(video_path, left_line, start_line, end_line, distance, output_filename):
+    """Process a video to count vehicles and compute average speeds, using reference logic."""
+    global progress
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.error(f"Failed to open video: {video_path}")
+        raise ValueError('Failed to open video')
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    # Create polygon from start_line and end_line
+    polygon = np.array([start_line[0], start_line[1], end_line[1], end_line[0]], dtype=np.int32)
+    zone = PolygonZone(polygon=polygon)
+    zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=Color.BLUE, thickness=2)
+    tracker = initialize_tracker()
+    tracker.reset()
+
+    counts = defaultdict(lambda: {'count': set(), 'speeds': []})
+    live_counts = defaultdict(int)
+    tracks = {}  # Track centroids for speed calculation
+    frame_count = 0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        results = model(frame, verbose=False, device=device)[0]
+        detections = sv.Detections.from_ultralytics(results)
+        detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
+        detections = tracker.update_with_detections(detections=detections)
+
+        # Filter detections by left_line and polygon zone
+        in_zone_mask = zone.trigger(detections=detections)
+        left_mask = detections.xyxy[:, 0] >= left_line
+        valid_mask = in_zone_mask & left_mask
+        detections_in_zone = detections[valid_mask]
+
+        # Update counts and speeds
+        current_ids = detections_in_zone.tracker_id.astype(int).tolist()
+        for class_id, tracker_id, xyxy in zip(
+            detections_in_zone.class_id,
+            detections_in_zone.tracker_id,
+            detections_in_zone.xyxy
+        ):
+            class_name = model.model.names[class_id]
+            counts[class_name]['count'].add(tracker_id)
+            live_counts[class_name] = len(counts[class_name]['count'])
+
+            # Calculate speed
+            if distance > 0:
+                x1, y1, x2, y2 = xyxy
+                center_y = (y1 + y2) / 2
+                track_key = (class_name, tracker_id)
+                if frame_count > 0 and track_key in tracks.get(frame_count - 1, {}):
+                    prev_y = tracks[frame_count - 1][track_key]
+                    pixel_distance = abs(center_y - prev_y)
+                    meters_per_pixel = distance / abs(start_line[0][1] - end_line[0][1])
+                    speed_mps = pixel_distance * meters_per_pixel * fps
+                    speed_kmph = speed_mps * 3.6
+                    counts[class_name]['speeds'].append(speed_kmph)
+
+                if frame_count not in tracks:
+                    tracks[frame_count] = {}
+                tracks[frame_count][track_key] = center_y
+
+        # Annotate frame (adapted from reference)
+        labels = [
+            f"#{tracker_id} {model.model.names[class_id]} {conf:.2f}"
+            for class_id, tracker_id, conf in zip(
+                detections_in_zone.class_id,
+                detections_in_zone.tracker_id,
+                detections_in_zone.confidence
             )
-        summary_table += (
-            f"<tr style='font-weight: bold; background: #f0f0f0;'>"
-            f"<td style='padding: 20px; font-size: 1.1rem; border: 1px solid #ddd; color: #000;'>Total</td>"
-            f"<td style='padding: 20px; font-size: 1.1rem; border: 1px solid #ddd; color: #000;'>{total_count}</td>"
-            f"</tr>"
-            "</tbody>"
-            "</table>"
-            "</div>"
+        ]
+        annotated_frame = frame.copy()
+        annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
+        annotated_frame = box_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
+        annotated_frame = label_annotator.annotate(
+            scene=annotated_frame, detections=detections_in_zone, labels=labels
         )
-        return jsonify({"status": "complete", "progress": 100, "summary": summary_table})
-    return jsonify({"status": processing_status["status"], "progress": processing_status["progress"]})
+        annotated_frame = zone_annotator.annotate(scene=annotated_frame)
 
-@app.route('/outputs/<filename>')
-def serve_video(filename):
-    return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=False, mimetype='video/mp4')
+        # Draw left line
+        cv2.line(annotated_frame, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
+
+        # Add count text
+        total_count = sum(len(c['count']) for c in counts.values())
+        count_text = f"Current: {len(current_ids)} | Total: {total_count}"
+        annotated_frame = sv.draw_text(
+            scene=annotated_frame,
+            text=count_text,
+            text_anchor=Point(50, 50),
+            text_color=Color.WHITE,
+            background_color=Color.BLACK,
+            text_thickness=1,
+            text_scale=0.8
+        )
+
+        out.write(annotated_frame)
+        frame_count += 1
+        with lock:
+            progress['progress'] = min(99, (frame_count / total_frames) * 100)
+            progress['live_counts'] = dict(live_counts)
+
+    # Compute final counts and average speeds
+    final_counts = {}
+    for cls in counts:
+        final_counts[cls] = {
+            'count': len(counts[cls]['count']),
+            'average_speed': (
+                sum(counts[cls]['speeds']) / len(counts[cls]['speeds'])
+                if counts[cls]['speeds'] else 0
+            )
+        }
+
+    cap.release()
+    logger.debug(f"Video processed, counts: {final_counts}")
+    return {'video_writer': out, 'counts': final_counts, 'live_counts': live_counts}
 
 @app.route('/get-first-frame', methods=['POST'])
 def get_first_frame():
-    if 'video' not in request.files:
-        return jsonify({"error": "No video file provided"}), 400
-    
-    file = request.files['video']
-    source_path = os.path.join(UPLOAD_FOLDER, file.filename)
-    file.save(source_path)
+    """Extract the first frame of a video for preview."""
+    if 'file' not in request.files:
+        logger.error("No file part in request")
+        return jsonify({'error': 'No file part'}), 400
 
-    cap = cv2.VideoCapture(source_path)
-    ret, frame = cap.read()
-    if not ret:
+    file = request.files['file']
+    if file.filename == '':
+        logger.error("No selected file")
+        return jsonify({'error': 'No selected file'}), 400
+
+    valid_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+    if not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+        logger.error(f"Unsupported file extension: {file.filename}")
+        return jsonify({'error': 'Unsupported video format. Use MP4, AVI, MOV, MKV, or WEBM'}), 400
+
+    temp_file = None
+    try:
+        temp_file = tempfile.NamedTemporaryFile(suffix=os.path.splitext(file.filename)[1], delete=False)
+        file.save(temp_file.name)
+        temp_file.close()
+
+        logger.debug(f"Temporary file saved: {temp_file.name}")
+
+        cap = cv2.VideoCapture(temp_file.name)
+        if not cap.isOpened():
+            logger.error(f"Failed to open video file: {temp_file.name}")
+            raise ValueError('Failed to open video file')
+
+        for attempt in range(3):
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                logger.debug(f"Successfully extracted frame on attempt {attempt + 1}")
+                cap.release()
+                _, buffer = cv2.imencode('.jpg', frame)
+                return send_file(
+                    io.BytesIO(buffer),
+                    mimetype='image/jpeg',
+                    as_attachment=True,
+                    download_name='first_frame.jpg'
+                )
+            time.sleep(0.1)
+
         cap.release()
-        os.remove(source_path)
-        return jsonify({"error": "Failed to read video"}), 500
-    
-    cap.release()
+        logger.error(f"Failed to extract frame from {temp_file.name} after 3 attempts")
+        raise ValueError('Failed to extract frame from video')
 
-    _, img_buffer = cv2.imencode(".jpg", frame)
-    img_io = BytesIO(img_buffer.tobytes())
-    os.remove(source_path) 
-    
-    return send_file(
-        img_io,
-        mimetype='image/jpeg',
-        as_attachment=True,
-        download_name=f"{file.filename.split('.')[0]}_first_frame.jpg"
-    )
+    except Exception as e:
+        logger.error(f"Error in get_first_frame: {str(e)}")
+        return jsonify({'error': f'Failed to extract frame: {str(e)}'}), 500
+
+    finally:
+        if temp_file and os.path.exists(temp_file.name):
+            try:
+                os.unlink(temp_file.name)
+                logger.debug(f"Cleaned up temporary file: {temp_file.name}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary file: {str(e)}")
+
+@app.route('/status')
+def status():
+    """Return processing status, progress, and live counts."""
+    with lock:
+        return jsonify(progress)
+
+@app.route('/outputs/<filename>')
+def serve_output(filename):
+    """Serve processed media files."""
+    try:
+        return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=False)
+    except Exception as e:
+        logger.error(f"Error serving file {filename}: {str(e)}")
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/get-results/<filename>')
+def get_results(filename):
+    """Return processing results with summary."""
+    with lock:
+        if progress['status'] != 'complete':
+            logger.error(f"Processing not complete for {filename}")
+            return jsonify({'error': 'Processing not complete'}), 400
+
+        summary_list = []
+        for vehicle_class, data in progress['summary'].items():
+            summary_list.append({
+                'vehicle_class': vehicle_class,
+                'count': data['count'],
+                'average_speed': round(data['average_speed'], 1)
+            })
+
+        response = {
+            'processed_media_url': f'/outputs/{filename}',
+            'download_url': f'/outputs/{filename}',
+            'summary': summary_list
+        }
+        logger.debug(f"Results for {filename}: {response}")
+        return jsonify(response)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, threaded=True)

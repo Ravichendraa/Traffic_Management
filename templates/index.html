@@ -1,376 +1,863 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Vehicle Detection Pro</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        body {
-            background: linear-gradient(135deg, rgba(30, 60, 114, 0.8), rgba(42, 82, 152, 0.8)), url('https://images.unsplash.com/photo-1519750783829-e1c0b0f0f7a8?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80') no-repeat center center fixed;
-            background-size: cover;
-            font-family: 'Arial', sans-serif;
-            color: white;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .dropzone {
-            border: 4px dashed #ffffff; padding: 50px; text-align: center; background: rgba(255, 255, 255, 0.15);
-            border-radius: 20px; transition: all 0.4s ease; cursor: pointer; position: relative; overflow: hidden;
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
-        }
-        .dropzone.dragover { background: rgba(255, 255, 255, 0.3); border-color: #00ffcc; transform: scale(1.03); box-shadow: 0 0 30px rgba(0, 255, 204, 0.6); }
-        .dropzone.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
-        .dropzone::before {
-            content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
-            background: radial-gradient(circle, rgba(255, 255, 255, 0.2), transparent);
-            transition: all 0.5s ease; opacity: 0;
-        }
-        .dropzone.dragover::before { opacity: 1; transform: translate(25%, 25%); }
-        .loader {
-            border: 6px solid rgba(255, 255, 255, 0.3); border-top: 6px solid #00ffcc; border-radius: 50%;
-            width: 60px; height: 60px; animation: spin 1s linear infinite; margin: 20px auto; display: none;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .progress-bar {
-            height: 10px; width: 100%; background-color: rgba(255, 255, 255, 0.2); border-radius: 15px;
-            overflow: hidden; margin: 20px 0; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-        }
-        .progress-fill {
-            height: 100%; background: linear-gradient(90deg, #00ffcc, #00ccff); width: 0%; transition: width 0.5s ease;
-            border-radius: 15px; box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
-        }
-        .status-text { font-size: 1.5rem; font-weight: 700; text-align: center; margin: 15px 0; text-shadow: 0 3px 6px rgba(0, 0, 0, 0.3); }
-        .download-btn, .action-btn {
-            display: inline-block; padding: 14px 28px; background: linear-gradient(45deg, #00ffcc, #00ccff);
-            color: #1e3c72; font-weight: bold; border-radius: 50px; text-decoration: none; margin: 10px;
-            transition: all 0.3s ease; box-shadow: 0 6px 15px rgba(0, 255, 204, 0.5); border: none; cursor: pointer;
-            position: relative; overflow: hidden;
-        }
-        .download-btn:hover, .action-btn:hover {
-            transform: translateY(-4px); box-shadow: 0 10px 25px rgba(0, 255, 204, 0.7); background: linear-gradient(45deg, #00ccff, #00ffcc);
-        }
-        .download-btn i, .action-btn i { margin-right: 10px; }
-        .select-btn {
-            padding: 14px 28px; background: rgba(255, 255, 255, 0.95); color: #1e3c72; font-weight: bold;
-            border-radius: 50px; border: none; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2);
-        }
-        .select-btn:hover { background: white; transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3); }
-        h1 { text-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); position: relative; display: inline-block; }
-        h1:after {
-            content: ''; position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%);
-            width: 100px; height: 5px; background: #00ffcc; border-radius: 3px; animation: pulse 2s infinite;
-        }
-        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-        #polygon-section { display: none; width: 100%; max-width: 700px; margin: 20px auto; }
-        #polygon-input {
-            width: 100%; padding: 15px; border-radius: 10px; background: rgba(255, 255, 255, 0.9); color: #333;
-            font-size: 1.1rem; resize: vertical; min-height: 120px; border: 3px solid #00ffcc; transition: all 0.3s ease;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-        }
-        #polygon-input:focus { outline: none; border-color: #00ccff; box-shadow: 0 0 15px rgba(0, 255, 204, 0.6); }
-        .steps-container {
-            display: flex; justify-content: space-between; margin-bottom: 30px; flex-wrap: wrap; gap: 15px;
-        }
-        .step-box {
-            flex: 1; min-width: 150px; background: rgba(0, 0, 0, 0.4); padding: 20px; border-radius: 15px;
-            text-align: center; transition: all 0.3s ease; position: relative; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-        }
-        .step-box.active { background: rgba(0, 255, 204, 0.2); box-shadow: 0 0 20px rgba(0, 255, 204, 0.5); }
-        .step-box i { font-size: 2rem; margin-bottom: 10px; color: #00ffcc; }
-        .step-box p { font-size: 1rem; font-weight: 600; }
-        .step-box .check {
-            position: absolute; top: 10px; right: 10px; font-size: 1.5rem; color: #00ffcc;
-            opacity: 0; transition: opacity 0.4s ease, transform 0.4s ease;
-        }
-        .step-box.active .check { opacity: 1; transform: scale(1.2); }
-        .animate-fade-in { animation: fadeIn 0.6s ease forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        .format-warning {
-            display: none; background-color: rgba(255, 100, 100, 0.3); border: 2px solid rgba(255, 100, 100, 0.6);
-            color: #ffecec; padding: 12px 18px; border-radius: 10px; margin-top: 15px; font-size: 1rem; text-align: center;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-        }
-        .success-message {
-            display: none; text-align: center; font-size: 2rem; font-weight: bold; color: #00ffcc;
-            text-shadow: 0 4px 12px rgba(0, 255, 204, 0.5); margin: 20px 0; animation: popIn 0.5s ease;
-        }
-        @keyframes popIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Advanced Vehicle Detection Pro</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    body {
+      background: linear-gradient(135deg, rgba(245, 245, 245, 0.95), rgba(255, 255, 255, 0.95)),
+      url('https://images.unsplash.com/photo-1519750783829-e1c0b0f0f7a8?ixlib=rb-4.0.3&auto=format&fit=crop&w=1350&q=80')
+      no-repeat center center fixed;
+      background-size: cover;
+      font-family: 'Inter', sans-serif;
+      color: #1e3c72;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .navbar {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      padding: 15px 0;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+    .navbar a {
+      color: #1e3c72;
+      font-weight: 600;
+      padding: 10px 20px;
+      transition: all 0.3s ease;
+    }
+    .navbar a:hover:not(.disabled) {
+      color: #d4af37;
+      border-bottom: 2px solid #d4af37;
+    }
+    .navbar a.active {
+      color: #d4af37;
+      border-bottom: 2px solid #d4af37;
+    }
+    .navbar a.disabled {
+      color: #a0aec0;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(10px);
+      border: 1px solid #d4af37;
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 15px 40px rgba(212, 175, 55, 0.3);
+    }
+    .btn-primary {
+      background: linear-gradient(45deg, #d4af37, #f1c40f);
+      padding: 12px 24px;
+      border-radius: 50px;
+      color: #1e3c72;
+      font-weight: bold;
+      transition: all 0.3s ease;
+      box-shadow: 0 5px 15px rgba(212, 175, 55, 0.4);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(212, 175, 55, 0.6);
+      background: linear-gradient(45deg, #f1c40f, #d4af37);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 12px 24px;
+      border-radius: 50px;
+      color: #1e3c72;
+      font-weight: bold;
+      border: 1px solid #d4af37;
+      transition: all 0.3s ease;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    .btn-secondary:hover {
+      transform: translateY(-2px);
+      background: white;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    }
+    .dropzone {
+      border: 3px dashed #d4af37;
+      padding: 40px;
+      text-align: center;
+      border-radius: 15px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    .dropzone.dragover {
+      background: rgba(212, 175, 55, 0.2);
+      border-color: #f1c40f;
+      transform: scale(1.02);
+    }
+    .loader {
+      border: 5px solid rgba(255, 255, 255, 0.3);
+      border-top: 5px solid #d4af37;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .progress-bar {
+      height: 8px;
+      background: rgba(212, 175, 55, 0.2);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #d4af37, #f1c40f);
+      transition: width 0.5s ease;
+    }
+    .format-list {
+      font-size: 0.9rem;
+      color: #4a5568;
+      margin-top: 10px;
+    }
+    .input-field {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.9);
+      color: #1e3c72;
+      border: 2px solid #d4af37;
+      transition: all 0.3s ease;
+    }
+    .input-field:focus {
+      outline: none;
+      border-color: #f1c40f;
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+    }
+    .live-counter {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+      z-index: 1001;
+      font-size: 1.2rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .summary-table th, .summary-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+    }
+    .summary-table th {
+      background: rgba(212, 175, 55, 0.2);
+    }
+    .animate-slide-in {
+      animation: slideIn 0.5s ease forwards;
+    }
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      margin: 20px 0;
+      overflow: hidden;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    #preview-canvas {
+      width: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+    .polygon-point {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background-color: #d4af37;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+    }
+    .polygon-line {
+      position: absolute;
+      background-color: rgba(212, 175, 55, 0.7);
+      z-index: 5;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
 </head>
 <body>
-    <div class="container flex flex-col items-center justify-center py-12">
-        <h1 class="text-6xl font-bold mb-16 text-white animate-fade-in">Advanced Vehicle Detection Pro</h1>
-        
-        <div id="dropzone" class="dropzone w-full md:w-3/4 lg:w-2/3 animate-fade-in" style="animation-delay: 0.1s">
-            <p class="text-3xl mb-3 font-semibold">Drag & Drop Your Video Here</p>
-            <p class="text-lg mb-6 opacity-80">or</p>
-            <input type="file" id="fileInput" accept="video/*" class="hidden">
-            <button id="selectBtn" class="select-btn"><i class="fas fa-file-video"></i> Select Video</button>
-            <p id="processing-message" class="hidden mt-4 text-red-300 font-medium">A video is already processing. Please wait!</p>
-            <div id="format-warning" class="format-warning mt-4">
-                <i class="fas fa-exclamation-circle mr-2"></i> For best results, use MP4 files with H.264 encoding.
-            </div>
-        </div>
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="container flex justify-between items-center">
+      <a href="#" class="text-xl font-bold text-[#d4af37]">Vehicle Detection Pro</a>
+      <div class="flex gap-4">
+        <a href="#" id="nav-home" class="active">Home</a>
+        <a href="#" id="nav-image" class="disabled">Image Detector</a>
+        <a href="#" id="nav-video" class="disabled">Video Detector</a>
+      </div>
+    </div>
+  </nav>
 
-        <div id="polygon-section" class="animate-fade-in">
-            <div class="steps-container">
-                <div class="step-box" id="step1">
-                    <i class="fas fa-upload"></i>
-                    <p>Upload Video</p>
-                    <i class="fas fa-check check"></i>
-                </div>
-                <div class="step-box" id="step2">
-                    <i class="fas fa-draw-polygon"></i>
-                    <p>Enter Detection Area</p>
-                    <i class="fas fa-check check"></i>
-                </div>
-                <div class="step-box" id="step3">
-                    <i class="fas fa-cogs"></i>
-                    <p>Processing</p>
-                    <i class="fas fa-check check"></i>
-                </div>
-                <div class="step-box" id="step4">
-                    <i class="fas fa-chart-bar"></i>
-                    <p>Results</p>
-                    <i class="fas fa-check check"></i>
-                </div>
-            </div>
-            <div class="instructions">
-                <p class="text-center mb-4">1. Click "Download First Frame" to get the first frame as a .jpg file.</p>
-                <p class="text-center mb-4">2. Visit <a href="https://polygonzone.roboflow.com/" target="_blank" class="text-blue-300 underline hover:text-blue-200">PolygonZone</a>, upload the frame, draw a polygon, and copy the points.</p>
-                <p class="text-center mb-4">3. Paste the polygon points below and click "Confirm & Process".</p>
-            </div>
-            <button id="download-frame-btn" class="action-btn"><i class="fas fa-download"></i> Download First Frame</button>
-            <label for="polygon-input" class="text-xl font-semibold mb-3 block text-center mt-6">Enter Polygon Points:</label>
-            <textarea id="polygon-input" placeholder="[[615, 504], [1064, 1052], [1905, 1062], [1912, 650], [1309, 502], [1235, 480]]"></textarea>
-            <button id="submit-polygon" class="action-btn mt-4"><i class="fas fa-check"></i> Confirm & Process</button>
-        </div>
-
-        <div id="progress-container" class="w-full md:w-3/4 lg:w-2/3 mt-8 hidden animate-fade-in">
-            <div class="status-text" id="status">Uploading...</div>
-            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-            <div id="progress-percentage" class="text-center mt-3 text-lg font-medium">0%</div>
-            <div id="time-estimate" class="text-center mt-2 text-sm opacity-80">Estimated time remaining: Calculating...</div>
-            <div id="loader" class="loader"></div>
-        </div>
-
-        <div id="success-message" class="success-message">Processing Complete! 🎉</div>
-        <div id="result" class="w-full animate-fade-in hidden"></div>
-        <div id="video-section" class="w-full animate-fade-in hidden"></div>
+  <div class="container flex flex-col items-center justify-center py-12">
+    <!-- Live Counter -->
+    <div id="live-counter" class="live-counter hidden">
+      <p>Live Vehicle Count</p>
+      <div id="counter-content"></div>
     </div>
 
-    <script>
-        const dropzone = document.getElementById('dropzone');
-        const fileInput = document.getElementById('fileInput');
-        const selectBtn = document.getElementById('selectBtn');
-        const statusDiv = document.getElementById('status');
-        const loader = document.getElementById('loader');
-        const resultDiv = document.getElementById('result');
-        const videoSection = document.getElementById('video-section');
-        const progressContainer = document.getElementById('progress-container');
-        const progressFill = document.getElementById('progress-fill');
-        const progressPercentage = document.getElementById('progress-percentage');
-        const processingMessage = document.getElementById('processing-message');
-        const timeEstimate = document.getElementById('time-estimate');
-        const polygonSection = document.getElementById('polygon-section');
-        const polygonInput = document.getElementById('polygon-input');
-        const submitPolygonBtn = document.getElementById('submit-polygon');
-        const downloadFrameBtn = document.getElementById('download-frame-btn');
-        const successMessage = document.getElementById('success-message');
-        const steps = [document.getElementById('step1'), document.getElementById('step2'), document.getElementById('step3'), document.getElementById('step4')];
+    <!-- Initial Selection Screen -->
+    <div id="selection-screen" class="card w-full md:w-3/4 lg:w-2/3 animate-slide-in">
+      <h2 class="text-2xl font-semibold mb-6 text-center">Choose Media Type</h2>
+      <div class="flex justify-center gap-6">
+        <button id="image-select" class="btn-primary"><i class="fas fa-image mr-2"></i> Upload Image</button>
+        <button id="video-select" class="btn-primary"><i class="fas fa-video mr-2"></i> Upload Video</button>
+      </div>
+    </div>
 
-        let isProcessing = false;
-        let startTime = 0;
-        let elapsedTimeInterval;
-        let selectedFile = null;
+    <!-- Image Upload Interface -->
+    <div id="image-upload" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
+      <h2 class="text-2xl font-semibold mb-6 text-center">Upload Image</h2>
+      <div class="dropzone" id="image-dropzone">
+        <p class="text-xl mb-3">Drag & Drop Your Image Here</p>
+        <p class="text-sm mb-4 opacity-80">or</p>
+        <input type="file" id="image-input" accept="image/jpeg,image/png,image/gif" class="hidden" />
+        <button id="image-select-btn" class="btn-secondary"><i class="fas fa-image mr-2"></i> Select Image</button>
+      </div>
+      <p class="format-list text-center">Supported formats: JPEG, PNG, GIF</p>
+    </div>
 
-        dropzone.addEventListener('dragover', e => { e.preventDefault(); if (!isProcessing) dropzone.classList.add('dragover'); });
-        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-        dropzone.addEventListener('drop', e => {
-            e.preventDefault();
-            dropzone.classList.remove('dragover');
-            if (isProcessing) {
-                processingMessage.classList.remove('hidden');
-                setTimeout(() => processingMessage.classList.add('hidden'), 3000);
-                return;
-            }
-            const files = e.dataTransfer.files;
-            if (files.length > 0) handleFileSelection(files[0]);
+    <!-- Video Upload Interface -->
+    <div id="video-upload" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
+      <h2 class="text-2xl font-semibold mb-6 text-center">Upload Video</h2>
+      <div class="dropzone" id="video-dropzone">
+        <p class="text-xl mb-3">Drag & Drop Your Video Here</p>
+        <p class="text-sm mb-4 opacity-80">or</p>
+        <input type="file" id="video-input" accept="video/mp4,video/avi,video/mov,video/mkv,video/webm" class="hidden" />
+        <button id="video-select-btn" class="btn-secondary"><i class="fas fa-video mr-2"></i> Select Video</button>
+      </div>
+      <p class="format-list text-center">Supported formats: MP4, AVI, MOV, MKV, WEBM</p>
+    </div>
+
+    <!-- Region Selection Interface -->
+    <div id="region-selection" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
+      <h2 class="text-2xl font-semibold mb-6 text-center">Select Region of Interest</h2>
+      
+      <div class="canvas-container">
+        <canvas id="preview-canvas"></canvas>
+        <div id="polygon-points"></div>
+      </div>
+      
+      <div class="flex justify-center gap-4 mb-6 mt-4">
+        <button id="entire-screen" class="btn-primary"><i class="fas fa-expand mr-2"></i> Entire Screen</button>
+        <button id="choose-region" class="btn-primary"><i class="fas fa-crop-alt mr-2"></i> Choose Region</button>
+        <button id="roboflow-polygon" class="btn-primary"><i class="fas fa-link mr-2"></i> Use Roboflow PolygonZone</button>
+        <button id="download-frame" class="btn-secondary hidden"><i class="fas fa-download mr-2"></i> Download First Frame</button>
+        <button id="reset-points" class="btn-secondary hidden"><i class="fas fa-undo mr-2"></i> Reset Points</button>
+      </div>
+      
+      <div id="coordinate-inputs" class="hidden">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-lg font-semibold mb-2">Left Line X Coordinate:</label>
+            <input type="text" id="left-line" class="input-field" placeholder="e.g., 500" />
+          </div>
+          <div id="distance-input" class="hidden">
+            <label class="block text-lg font-semibold mb-2">Distance Between Lines (meters):</label>
+            <input type="text" id="distance" class="input-field" placeholder="e.g., 10" />
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-lg font-semibold mb-2">Start Line Points:</label>
+            <input type="text" id="start-line" class="input-field" placeholder="[[300,500],[1800,500]]" />
+          </div>
+          <div>
+            <label class="block text-lg font-semibold mb-2">End Line Points:</label>
+            <input type="text" id="end-line" class="input-field" placeholder="[[300,700],[1800,700]]" />
+          </div>
+        </div>
+        
+        <button id="submit-region" class="btn-primary w-full mt-4"><i class="fas fa-check mr-2"></i> Confirm & Process</button>
+      </div>
+    </div>
+
+    <!-- Progress and Results -->
+    <div id="progress-container" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
+      <div class="text-xl font-semibold mb-4 text-center" id="status">Processing...</div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <div id="progress-percentage" class="text-center mt-2">0%</div>
+      <div id="loader" class="loader"></div>
+    </div>
+
+    <div id="results" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
+      <h2 class="text-2xl font-semibold mb-6 text-center">Detection Results</h2>
+      
+      <div id="media-container" class="mb-6 rounded-lg overflow-hidden shadow-lg"></div>
+      
+      <h3 class="text-xl font-semibold mb-4">Vehicle Summary</h3>
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>Vehicle Class</th>
+            <th>Count</th>
+            <th id="speed-header" class="hidden">Average Speed (km/h)</th>
+          </tr>
+        </thead>
+        <tbody id="summary-table-body"></tbody>
+      </table>
+      
+      <div id="download-section" class="text-center mt-6">
+        <a id="download-link" class="btn-primary"><i class="fas fa-download mr-2"></i> Download Processed Media</a>
+        <button id="start-new" class="btn-secondary ml-4"><i class="fas fa-plus mr-2"></i> Start New Detection</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const selectionScreen = document.getElementById('selection-screen');
+    const imageUpload = document.getElementById('image-upload');
+    const videoUpload = document.getElementById('video-upload');
+    const regionSelection = document.getElementById('region-selection');
+    const progressContainer = document.getElementById('progress-container');
+    const results = document.getElementById('results');
+    const imageDropzone = document.getElementById('image-dropzone');
+    const videoDropzone = document.getElementById('video-dropzone');
+    const imageInput = document.getElementById('image-input');
+    const videoInput = document.getElementById('video-input');
+    const imageSelectBtn = document.getElementById('image-select-btn');
+    const videoSelectBtn = document.getElementById('video-select-btn');
+    const entireScreenBtn = document.getElementById('entire-screen');
+    const chooseRegionBtn = document.getElementById('choose-region');
+    const roboflowPolygonBtn = document.getElementById('roboflow-polygon');
+    const downloadFrameBtn = document.getElementById('download-frame');
+    const resetPointsBtn = document.getElementById('reset-points');
+    const coordinateInputs = document.getElementById('coordinate-inputs');
+    const leftLineInput = document.getElementById('left-line');
+    const startLineInput = document.getElementById('start-line');
+    const endLineInput = document.getElementById('end-line');
+    const distanceInput = document.getElementById('distance-input');
+    const distanceValue = document.getElementById('distance');
+    const submitRegionBtn = document.getElementById('submit-region');
+    const statusDiv = document.getElementById('status');
+    const progressFill = document.getElementById('progress-fill');
+    const progressPercentage = document.getElementById('progress-percentage');
+    const loader = document.getElementById('loader');
+    const summaryTableBody = document.getElementById('summary-table-body');
+    const speedHeader = document.getElementById('speed-header');
+    const downloadLink = document.getElementById('download-link');
+    const startNewBtn = document.getElementById('start-new');
+    const mediaContainer = document.getElementById('media-container');
+    const liveCounter = document.getElementById('live-counter');
+    const counterContent = document.getElementById('counter-content');
+    const navHome = document.getElementById('nav-home');
+    const navImage = document.getElementById('nav-image');
+    const navVideo = document.getElementById('nav-video');
+    const previewCanvas = document.getElementById('preview-canvas');
+    const ctx = previewCanvas.getContext('2d');
+    const polygonPointsContainer = document.getElementById('polygon-points');
+
+    // State variables
+    let selectedFile = null;
+    let mediaType = null;
+    let isProcessing = false;
+    let liveCounts = {};
+    let points = [];
+    let previewImage = new Image();
+    let isDrawingPolygon = false;
+    let firstFrameUrl = null;
+
+    // Navbar Navigation
+    navHome.addEventListener('click', (e) => {
+      e.preventDefault();
+      resetInterface();
+    });
+
+    navImage.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!navImage.classList.contains('disabled')) {
+        showImageUpload();
+      }
+    });
+
+    navVideo.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!navVideo.classList.contains('disabled')) {
+        showVideoUpload();
+      }
+    });
+
+    // Initial Selection
+    document.getElementById('image-select').addEventListener('click', () => {
+      showImageUpload();
+    });
+
+    document.getElementById('video-select').addEventListener('click', () => {
+      showVideoUpload();
+    });
+
+    function showImageUpload() {
+      selectionScreen.classList.add('hidden');
+      imageUpload.classList.remove('hidden');
+      mediaType = 'image';
+      downloadFrameBtn.classList.add('hidden');
+      navHome.classList.remove('active');
+      navImage.classList.add('active');
+      navImage.classList.remove('disabled');
+      navVideo.classList.remove('active');
+      navVideo.classList.add('disabled');
+    }
+
+    function showVideoUpload() {
+      selectionScreen.classList.add('hidden');
+      videoUpload.classList.remove('hidden');
+      mediaType = 'video';
+      distanceInput.classList.remove('hidden');
+      downloadFrameBtn.classList.remove('hidden');
+      navHome.classList.remove('active');
+      navVideo.classList.add('active');
+      navVideo.classList.remove('disabled');
+      navImage.classList.remove('active');
+      navImage.classList.add('disabled');
+    }
+
+    // File Upload Handlers
+    function setupDropzone(dropzone, input, acceptTypes) {
+      dropzone.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (!isProcessing) dropzone.classList.add('dragover');
+      });
+      
+      dropzone.addEventListener('dragleave', () => {
+        dropzone.classList.remove('dragover');
+      });
+      
+      dropzone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (isProcessing) return;
+        
+        const file = e.dataTransfer.files[0];
+        if (file && acceptTypes.some(type => file.type.startsWith(type.split('/')[0] + '/'))) {
+          selectedFile = file;
+          handleFileSelected(file);
+        } else {
+          alert('Please select a valid file format.');
+        }
+      });
+      
+      input.addEventListener('change', () => {
+        if (input.files[0]) {
+          selectedFile = input.files[0];
+          handleFileSelected(selectedFile);
+        }
+      });
+    }
+
+    imageSelectBtn.addEventListener('click', () => imageInput.click());
+    videoSelectBtn.addEventListener('click', () => videoInput.click());
+    
+    setupDropzone(imageDropzone, imageInput, ['image/jpeg', 'image/png', 'image/gif']);
+    setupDropzone(videoDropzone, videoInput, ['video/mp4', 'video/avi', 'video/quicktime', 'video/x-matroska', 'video/webm']);
+
+    function handleFileSelected(file) {
+      imageUpload.classList.add('hidden');
+      videoUpload.classList.add('hidden');
+      regionSelection.classList.remove('hidden');
+      
+      if (file.type.startsWith('image/')) {
+        loadImagePreview(file);
+      } else if (file.type.startsWith('video/')) {
+        loadVideoFirstFrame(file);
+      }
+    }
+
+    // Preview Loading
+    function loadImagePreview(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        previewImage.onload = () => {
+          setupCanvas(previewImage);
+        };
+        previewImage.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function loadVideoFirstFrame(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        statusDiv.textContent = "Extracting first frame...";
+        progressContainer.classList.remove('hidden');
+        regionSelection.classList.add('hidden');
+        
+        const response = await fetch('/get-first-frame', { 
+          method: 'POST', 
+          body: formData 
         });
+        
+        progressContainer.classList.add('hidden');
+        regionSelection.classList.remove('hidden');
+        
+        if (!response.ok) {
+          throw new Error('Failed to extract frame');
+        }
+        
+        const blob = await response.blob();
+        firstFrameUrl = URL.createObjectURL(blob);
+        
+        previewImage.onload = () => {
+          setupCanvas(previewImage);
+        };
+        previewImage.src = firstFrameUrl;
+      } catch (error) {
+        alert('Error extracting video frame: ' + error.message);
+        resetInterface();
+      }
+    }
 
-        selectBtn.addEventListener('click', () => {
-            if (isProcessing) {
-                processingMessage.classList.remove('hidden');
-                setTimeout(() => processingMessage.classList.add('hidden'), 3000);
-                return;
+    function setupCanvas(image) {
+      const containerWidth = previewCanvas.parentElement.clientWidth;
+      const aspectRatio = image.height / image.width;
+      
+      previewCanvas.width = containerWidth;
+      previewCanvas.height = containerWidth * aspectRatio;
+      
+      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      ctx.drawImage(image, 0, 0, previewCanvas.width, previewCanvas.height);
+      
+      points = [];
+      updatePolygonPoints();
+    }
+
+    // Region Selection
+    entireScreenBtn.addEventListener('click', () => {
+      isDrawingPolygon = false;
+      resetPointsBtn.classList.add('hidden');
+      coordinateInputs.classList.add('hidden');
+      
+      const width = previewCanvas.width;
+      const height = previewCanvas.height;
+      
+      leftLineInput.value = 0;
+      startLineInput.value = JSON.stringify([[0, Math.floor(height/3)], [width, Math.floor(height/3)]]);
+      endLineInput.value = JSON.stringify([[0, Math.floor(2*height/3)], [width, Math.floor(2*height/3)]]);
+      
+      if (mediaType === 'video') {
+        distanceValue.value = '10';
+      }
+      
+      startProcessing();
+    });
+
+    chooseRegionBtn.addEventListener('click', () => {
+      isDrawingPolygon = true;
+      resetPointsBtn.classList.remove('hidden');
+      coordinateInputs.classList.remove('hidden');
+      points = [];
+      updatePolygonPoints();
+      
+      leftLineInput.value = '';
+      startLineInput.value = '';
+      endLineInput.value = '';
+      if (mediaType === 'video') {
+        distanceValue.value = '10';
+      }
+    });
+
+    roboflowPolygonBtn.addEventListener('click', () => {
+      if (!selectedFile) {
+        alert('Please upload a file first.');
+        return;
+      }
+      if (!firstFrameUrl && mediaType === 'video') {
+        alert('First frame not loaded yet.');
+        return;
+      }
+      const imageUrl = mediaType === 'image' ? previewImage.src : firstFrameUrl;
+      window.open(`https://polygonzone.roboflow.com/`, '_blank');
+      alert('After selecting coordinates in Roboflow PolygonZone, manually enter them in the input fields below.');
+      coordinateInputs.classList.remove('hidden');
+    });
+
+    downloadFrameBtn.addEventListener('click', () => {
+      if (!firstFrameUrl) {
+        alert('First frame not available.');
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = firstFrameUrl;
+      a.download = 'first_frame.jpg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+
+    resetPointsBtn.addEventListener('click', () => {
+      points = [];
+      updatePolygonPoints();
+      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      ctx.drawImage(previewImage, 0, 0, previewCanvas.width, previewCanvas.height);
+    });
+
+    previewCanvas.addEventListener('click', (e) => {
+      if (!isDrawingPolygon) return;
+      
+      const rect = previewCanvas.getBoundingClientRect();
+      const scaleX = previewCanvas.width / rect.width;
+      const scaleY = previewCanvas.height / rect.height;
+      
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      
+      points.push([Math.floor(x), Math.floor(y)]);
+      if (points.length > 4) points.shift();
+      updatePolygonPoints();
+      
+      if (points.length === 4) {
+        leftLineInput.value = Math.min(...points.map(p => p[0]));
+        startLineInput.value = JSON.stringify([points[0], points[1]]);
+        endLineInput.value = JSON.stringify([points[2], points[3]]);
+      }
+    });
+
+    function updatePolygonPoints() {
+      polygonPointsContainer.innerHTML = '';
+      
+      ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      ctx.drawImage(previewImage, 0, 0, previewCanvas.width, previewCanvas.height);
+      
+      if (points.length > 0) {
+        ctx.beginPath();
+        ctx.moveTo(points[0][0], points[0][1]);
+        
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i][0], points[i][1]);
+        }
+        
+        if (points.length === 4) {
+          ctx.lineTo(points[0][0], points[0][1]);
+        }
+        
+        ctx.strokeStyle = '#d4af37';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      
+      points.forEach((point, index) => {
+        const pointDiv = document.createElement('div');
+        pointDiv.className = 'polygon-point';
+        pointDiv.style.left = `${(point[0] / previewCanvas.width) * 100}%`;
+        pointDiv.style.top = `${(point[1] / previewCanvas.height) * 100}%`;
+        polygonPointsContainer.appendChild(pointDiv);
+      });
+    }
+
+    submitRegionBtn.addEventListener('click', () => {
+      if (!leftLineInput.value || !startLineInput.value || !endLineInput.value || 
+          (mediaType === 'video' && !distanceValue.value)) {
+        alert('Please provide all required coordinates. Draw a polygon, use Roboflow PolygonZone, or select "Entire Screen".');
+        return;
+      }
+      
+      startProcessing();
+    });
+
+    // Start Processing
+    function startProcessing() {
+      isProcessing = true;
+      navImage.classList.add('disabled');
+      navVideo.classList.add('disabled');
+      regionSelection.classList.add('hidden');
+      progressContainer.classList.remove('hidden');
+      statusDiv.textContent = 'Uploading...';
+      loader.style.display = 'block';
+      
+      if (mediaType === 'video') {
+        liveCounter.classList.remove('hidden');
+        updateLiveCounter({});
+        speedHeader.classList.remove('hidden');
+      }
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('media_type', mediaType);
+      formData.append('left_line', leftLineInput.value);
+      formData.append('start_line', startLineInput.value);
+      formData.append('end_line', endLineInput.value);
+      
+      if (mediaType === 'video') {
+        formData.append('distance', distanceValue.value);
+      }
+
+      fetch('/upload', { 
+        method: 'POST', 
+        body: formData 
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Server responded with an error');
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (data.error) {
+          handleProcessingError(new Error(data.error));
+          return;
+        }
+        statusDiv.textContent = 'Processing...';
+        checkStatus(data.filename);
+      })
+      .catch(error => {
+        handleProcessingError(error);
+      });
+    }
+
+    async function checkStatus(filename) {
+      const interval = setInterval(async () => {
+        try {
+          const response = await fetch('/status');
+          const statusData = await response.json();
+          progressFill.style.width = statusData.progress + '%';
+          progressPercentage.textContent = Math.round(statusData.progress) + '%';
+          
+          if (mediaType === 'video' && statusData.live_counts) {
+            updateLiveCounter(statusData.live_counts);
+          }
+          
+          if (statusData.status === 'complete') {
+            clearInterval(interval);
+            const resultsResponse = await fetch(`/get-results/${filename}`);
+            const resultsData = await resultsResponse.json();
+            if (resultsData.error) {
+              handleProcessingError(new Error(resultsData.error));
+              return;
             }
-            fileInput.click();
-        });
-
-        fileInput.addEventListener('change', function() {
-            if (this.files.length > 0) handleFileSelection(this.files[0]);
-        });
-
-        function handleFileSelection(file) {
-            if (!file.type.startsWith('video/')) { alert("Please select a valid video file."); return; }
-            selectedFile = file;
-            if (file.type !== 'video/mp4') document.getElementById('format-warning').style.display = 'block';
-            else document.getElementById('format-warning').style.display = 'none';
-            dropzone.classList.add('hidden');
-            polygonSection.style.display = 'block';
-            statusDiv.textContent = "Step 1 Complete! Now download the first frame.";
-            steps[0].classList.add('active');
+            handleProcessingSuccess(resultsData);
+          } else if (statusData.status === 'error') {
+            clearInterval(interval);
+            handleProcessingError(new Error(statusData.summary.error));
+          } else {
+            statusDiv.textContent = `Processing... (${Math.round(statusData.progress)}%)`;
+          }
+        } catch (error) {
+          clearInterval(interval);
+          handleProcessingError(error);
         }
+      }, 1000);
+    }
 
-        downloadFrameBtn.addEventListener('click', async () => {
-            if (!selectedFile) {
-                statusDiv.textContent = "Please upload a video first.";
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('video', selectedFile);
-
-            try {
-                const response = await fetch('/get-first-frame', { method: 'POST', body: formData });
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    statusDiv.textContent = errorData.error;
-                    return;
-                }
-
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${selectedFile.name.split('.')[0]}_first_frame.jpg`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-                statusDiv.textContent = "Step 2 Complete! Upload the frame to PolygonZone.";
-                steps[1].classList.add('active');
-            } catch (error) {
-                statusDiv.textContent = "Failed to download first frame. Please try again.";
-            }
-        });
-
-        submitPolygonBtn.addEventListener('click', async () => {
-            const polygonPoints = polygonInput.value.trim();
-            if (!selectedFile || !polygonPoints) {
-                statusDiv.textContent = "Please upload a video and enter polygon points.";
-                return;
-            }
-
-            steps[2].classList.add('active');
-
-            isProcessing = true;
-            startTime = new Date().getTime();
-            elapsedTimeInterval = setInterval(updateElapsedTime, 1000);
-
-            polygonSection.style.display = 'none';
-            progressContainer.classList.remove('hidden');
-            statusDiv.textContent = "Uploading...";
-            loader.style.display = "block";
-
-            const formData = new FormData();
-            formData.append('video', selectedFile);
-            formData.append('polygon_points', polygonPoints);
-
-            try {
-                const response = await fetch('/upload', { method: 'POST', body: formData });
-                const data = await response.json();
-                if (data.error) {
-                    statusDiv.textContent = data.error;
-                    loader.style.display = "none";
-                    resetInterface();
-                    return;
-                }
-                statusDiv.textContent = "Processing...";
-                checkStatus(data.filename);
-            } catch (error) {
-                statusDiv.textContent = "Upload failed. Please try again.";
-                loader.style.display = "none";
-                resetInterface();
-            }
-        });
-
-        async function checkStatus(filename) {
-            const interval = setInterval(async () => {
-                const response = await fetch('/status');
-                const statusData = await response.json();
-
-                progressFill.style.width = statusData.progress + '%';
-                progressPercentage.textContent = statusData.progress + '%';
-
-                if (statusData.status === "complete") {
-                    clearInterval(interval);
-                    clearInterval(elapsedTimeInterval);
-                    loader.style.display = "none";
-                    progressContainer.classList.add('hidden');
-                    statusDiv.textContent = "";
-                    steps[3].classList.add('active');
-                    successMessage.style.display = 'block';
-                    setTimeout(() => successMessage.style.display = 'none', 3000);
-                    showResults(filename, statusData.summary);
-                } else {
-                    statusDiv.textContent = `Processing... (${statusData.progress}%)`;
-                    const elapsed = new Date().getTime() - startTime;
-                    const estimated = (elapsed / statusData.progress) * (100 - statusData.progress);
-                    if (statusData.progress > 5) timeEstimate.textContent = `Estimated time remaining: ${formatTime(estimated)}`;
-                }
-            }, 1000);
+    function handleProcessingSuccess(data) {
+      isProcessing = false;
+      progressContainer.classList.add('hidden');
+      results.classList.remove('hidden');
+      loader.style.display = 'none';
+      
+      mediaContainer.innerHTML = '';
+      const mediaElement = document.createElement(mediaType === 'video' ? 'video' : 'img');
+      mediaElement.src = data.processed_media_url;
+      mediaElement.controls = mediaType === 'video';
+      mediaElement.className = 'w-full';
+      mediaContainer.appendChild(mediaElement);
+      
+      summaryTableBody.innerHTML = '';
+      data.summary.forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${item.vehicle_class}</td>
+          <td>${item.count}</td>
+          ${mediaType === 'video' ? `<td>${item.average_speed.toFixed(1)}</td>` : ''}
+        `;
+        summaryTableBody.appendChild(row);
+        
+        if (mediaType === 'video') {
+          liveCounts[item.vehicle_class] = item.count;
         }
+      });
+      
+      updateLiveCounter(liveCounts);
+      downloadLink.href = data.download_url;
+      downloadLink.download = selectedFile.name.replace(/\.[^/.]+$/, '') + '_processed.' + (mediaType === 'video' ? 'mp4' : 'jpg');
+    }
 
-        function updateElapsedTime() {
-            const elapsed = new Date().getTime() - startTime;
-            // No time-counter element in this simplified version
-        }
+    function handleProcessingError(error) {
+      isProcessing = false;
+      progressContainer.classList.add('hidden');
+      loader.style.display = 'none';
+      alert('Error processing file: ' + error.message);
+      resetInterface();
+    }
 
-        function formatTime(ms) {
-            if (ms < 1000) return `${ms}ms`;
-            if (ms < 60000) return `${Math.floor(ms / 1000)}s`;
-            return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
-        }
+    function resetInterface() {
+      selectionScreen.classList.remove('hidden');
+      imageUpload.classList.add('hidden');
+      videoUpload.classList.add('hidden');
+      regionSelection.classList.add('hidden');
+      progressContainer.classList.add('hidden');
+      results.classList.add('hidden');
+      liveCounter.classList.add('hidden');
+      speedHeader.classList.add('hidden');
+      
+      selectedFile = null;
+      mediaType = null;
+      isProcessing = false;
+      points = [];
+      liveCounts = {};
+      firstFrameUrl = null;
+      previewCanvas.width = 0;
+      previewCanvas.height = 0;
+      polygonPointsContainer.innerHTML = '';
+      navHome.classList.add('active');
+      navImage.classList.remove('active');
+      navImage.classList.remove('disabled');
+      navVideo.classList.remove('active');
+      navVideo.classList.remove('disabled');
+    }
 
-        function showResults(filename, summary) {
-            resultDiv.innerHTML = summary;
-            resultDiv.classList.remove('hidden');
+    function updateLiveCounter(counts) {
+      counterContent.innerHTML = '';
+      for (const [vehicleClass, count] of Object.entries(counts)) {
+        const div = document.createElement('div');
+        div.textContent = `${vehicleClass}: ${count}`;
+        counterContent.appendChild(div);
+      }
+    }
 
-            const videoContainerHtml = `
-                <div class="text-center animate-fade-in mt-10">
-                    <h3 class="text-2xl font-bold mb-6"><i class="fas fa-check-circle mr-2"></i>Ready to Download!</h3>
-                    <a href="/outputs/${filename}" download class="download-btn"><i class="fas fa-download"></i> Download Processed Video</a>
-                </div>
-            `;
-            videoSection.innerHTML = videoContainerHtml;
-            videoSection.classList.remove('hidden');
-
-            const analyzeAnother = document.createElement('div');
-            analyzeAnother.className = 'text-center mt-12';
-            analyzeAnother.innerHTML = `<button class="action-btn"><i class="fas fa-sync-alt mr-2"></i> Analyze Another Video</button>`;
-            analyzeAnother.querySelector('button').addEventListener('click', resetInterface);
-            videoSection.appendChild(analyzeAnother);
-
-            isProcessing = false;
-        }
-
-        function resetInterface() {
-            dropzone.classList.remove('hidden');
-            polygonSection.style.display = 'none';
-            resultDiv.classList.add('hidden');
-            videoSection.classList.add('hidden');
-            progressContainer.classList.add('hidden');
-            successMessage.style.display = 'none';
-            isProcessing = false;
-            selectedFile = null;
-            clearInterval(elapsedTimeInterval);
-            steps.forEach(step => step.classList.remove('active'));
-            statusDiv.textContent = "";
-        }
-    </script>
+    startNewBtn.addEventListener('click', resetInterface);
+  </script>
 </body>
 </html>
