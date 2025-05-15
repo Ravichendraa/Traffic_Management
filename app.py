@@ -10,7 +10,7 @@ import logging
 import io
 from collections import defaultdict
 from ultralytics import YOLO
-from supervision import PolygonZone, BoxAnnotator, LabelAnnotator, TraceAnnotator, ByteTrack, Color, Point
+from supervision import LineZone, LineZoneAnnotator, BoxAnnotator, LabelAnnotator, TraceAnnotator, ByteTrack, Color, Point
 import supervision as sv
 import torch
 
@@ -65,6 +65,10 @@ lock = threading.Lock()
 box_annotator = BoxAnnotator(thickness=2, color=Color.RED)
 label_annotator = LabelAnnotator(text_thickness=1, text_scale=0.5, text_color=Color.WHITE)
 trace_annotator = TraceAnnotator(thickness=2, trace_length=50, color=Color.GREEN)
+line_annotator = LineZoneAnnotator(thickness=2, color=Color.BLUE)
+
+# Confidence threshold
+CONFIDENCE_THRESHOLD = 0.45
 
 def initialize_tracker():
     """Initialize ByteTrack for vehicle tracking."""
@@ -171,32 +175,49 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                 logger.warning(f"Failed to unlink file {file_path}: {str(e)}")
 
 def process_image(image_path, left_line, start_line, end_line):
-    """Process an image to count vehicles in the specified region."""
+    """Process an image to count vehicles crossing start or end lines with confidence > 0.45."""
     image = cv2.imread(image_path)
     if image is None:
         logger.error(f"Failed to load image: {image_path}")
         raise ValueError('Failed to load image')
 
     height, width = image.shape[:2]
-    # Create polygon from start_line and end_line
-    polygon = np.array([start_line[0], start_line[1], end_line[1], end_line[0]], dtype=np.int32)
-    zone = PolygonZone(polygon=polygon)
-    zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=Color.BLUE, thickness=2)
+    # Define LineZones
+    start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
+    end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
 
     results = model(image, verbose=False, device=device)[0]
     detections = sv.Detections.from_ultralytics(results)
     detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
 
-    # Filter detections by left_line and polygon zone
-    in_zone_mask = zone.trigger(detections=detections)
-    left_mask = detections.xyxy[:, 0] >= left_line
-    valid_mask = in_zone_mask & left_mask
-    detections = detections[valid_mask]
+    # Apply confidence threshold
+    conf_mask = detections.confidence > CONFIDENCE_THRESHOLD
+    detections = detections[conf_mask]
 
+    # Filter by left_line
+    left_mask = detections.xyxy[:, 0] >= left_line
+    detections = detections[left_mask]
+
+    # Count vehicles crossing lines
     counts = defaultdict(int)
-    for class_id in detections.class_id:
-        class_name = model.model.names[class_id]
-        counts[class_name] += 1
+    processed_ids = set()  # Avoid double-counting
+    for idx, (xyxy, class_id, confidence) in enumerate(
+        zip(detections.xyxy, detections.class_id, detections.confidence)
+    ):
+        if idx in processed_ids:
+            continue
+        x1, y1, x2, y2 = xyxy
+        centroid = Point((x1 + x2) / 2, (y1 + y2) / 2)
+        single_detection = sv.Detections(
+            xyxy=np.array([xyxy]),
+            confidence=np.array([confidence]),
+            class_id=np.array([class_id]),
+            tracker_id=None
+        )
+        if start_line_zone.trigger(detections=single_detection) or end_line_zone.trigger(detections=single_detection):
+            class_name = model.model.names[class_id]
+            counts[class_name] += 1
+            processed_ids.add(idx)
 
     # Annotate image
     labels = [
@@ -204,14 +225,12 @@ def process_image(image_path, left_line, start_line, end_line):
         for class_id, conf in zip(detections.class_id, detections.confidence)
     ]
     annotated_image = image.copy()
-    annotated_image = trace_annotator.annotate(scene=annotated_image, detections=detections)
     annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections)
     annotated_image = label_annotator.annotate(
         scene=annotated_image, detections=detections, labels=labels
     )
-    annotated_image = zone_annotator.annotate(scene=annotated_image)
-
-    # Draw left line
+    annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=start_line_zone)
+    annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=end_line_zone)
     cv2.line(annotated_image, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
 
     # Add count text
@@ -231,7 +250,7 @@ def process_image(image_path, left_line, start_line, end_line):
     return {'image': annotated_image, 'counts': {k: {'count': v, 'average_speed': 0} for k, v in counts.items()}}
 
 def process_video(video_path, left_line, start_line, end_line, distance, output_filename):
-    """Process a video to count vehicles and compute average speeds, using reference logic."""
+    """Process a video to count vehicles and compute speeds with confidence > 0.45, using reference logic."""
     global progress
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -247,16 +266,14 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    # Create polygon from start_line and end_line
-    polygon = np.array([start_line[0], start_line[1], end_line[1], end_line[0]], dtype=np.int32)
-    zone = PolygonZone(polygon=polygon)
-    zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=Color.BLUE, thickness=2)
+    # Define LineZones
+    start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
+    end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
     tracker = initialize_tracker()
     tracker.reset()
 
-    counts = defaultdict(lambda: {'count': set(), 'speeds': []})
+    counts = defaultdict(lambda: {'count': set(), 'speeds': [], 'cross_times': {}})
     live_counts = defaultdict(int)
-    tracks = {}  # Track centroids for speed calculation
     frame_count = 0
 
     while cap.isOpened():
@@ -267,60 +284,69 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
         results = model(frame, verbose=False, device=device)[0]
         detections = sv.Detections.from_ultralytics(results)
         detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
+
+        # Apply confidence threshold
+        conf_mask = detections.confidence > CONFIDENCE_THRESHOLD
+        detections = detections[conf_mask]
+
         detections = tracker.update_with_detections(detections=detections)
 
-        # Filter detections by left_line and polygon zone
-        in_zone_mask = zone.trigger(detections=detections)
+        # Filter by left_line
         left_mask = detections.xyxy[:, 0] >= left_line
-        valid_mask = in_zone_mask & left_mask
-        detections_in_zone = detections[valid_mask]
+        detections = detections[left_mask]
 
         # Update counts and speeds
-        current_ids = detections_in_zone.tracker_id.astype(int).tolist()
-        for class_id, tracker_id, xyxy in zip(
-            detections_in_zone.class_id,
-            detections_in_zone.tracker_id,
-            detections_in_zone.xyxy
+        current_ids = detections.tracker_id.astype(int).tolist()
+        for idx, (class_id, tracker_id, xyxy, confidence) in enumerate(
+            zip(detections.class_id, detections.tracker_id, detections.xyxy, detections.confidence)
         ):
             class_name = model.model.names[class_id]
-            counts[class_name]['count'].add(tracker_id)
-            live_counts[class_name] = len(counts[class_name]['count'])
+            x1, y1, x2, y2 = xyxy
+            centroid = Point((x1 + x2) / 2, (y1 + y2) / 2)
+            track_key = (class_name, tracker_id)
 
-            # Calculate speed
-            if distance > 0:
-                x1, y1, x2, y2 = xyxy
-                center_y = (y1 + y2) / 2
-                track_key = (class_name, tracker_id)
-                if frame_count > 0 and track_key in tracks.get(frame_count - 1, {}):
-                    prev_y = tracks[frame_count - 1][track_key]
-                    pixel_distance = abs(center_y - prev_y)
-                    meters_per_pixel = distance / abs(start_line[0][1] - end_line[0][1])
-                    speed_mps = pixel_distance * meters_per_pixel * fps
-                    speed_kmph = speed_mps * 3.6
-                    counts[class_name]['speeds'].append(speed_kmph)
+            # Check line crossings
+            single_detection = sv.Detections(
+                xyxy=np.array([xyxy]),
+                confidence=np.array([confidence]),
+                class_id=np.array([class_id]),
+                tracker_id=np.array([tracker_id])
+            )
+            start_crossed = start_line_zone.trigger(detections=single_detection)
+            end_crossed = end_line_zone.trigger(detections=single_detection)
 
-                if frame_count not in tracks:
-                    tracks[frame_count] = {}
-                tracks[frame_count][track_key] = center_y
+            if start_crossed and track_key not in counts[class_name]['cross_times']:
+                counts[class_name]['cross_times'][track_key] = {'start_frame': frame_count}
+            if end_crossed and track_key in counts[class_name]['cross_times'] and \
+               'end_frame' not in counts[class_name]['cross_times'][track_key]:
+                start_frame = counts[class_name]['cross_times'][track_key].get('start_frame')
+                if start_frame is not None:
+                    counts[class_name]['cross_times'][track_key]['end_frame'] = frame_count
+                    frames_taken = frame_count - start_frame
+                    if frames_taken > 0 and distance > 0:
+                        speed_mps = distance / (frames_taken / fps)
+                        speed_kmph = speed_mps * 3.6
+                        counts[class_name]['speeds'].append(speed_kmph)
+                    counts[class_name]['count'].add(tracker_id)
+                    live_counts[class_name] = len(counts[class_name]['count'])
 
         # Annotate frame (adapted from reference)
         labels = [
             f"#{tracker_id} {model.model.names[class_id]} {conf:.2f}"
             for class_id, tracker_id, conf in zip(
-                detections_in_zone.class_id,
-                detections_in_zone.tracker_id,
-                detections_in_zone.confidence
+                detections.class_id,
+                detections.tracker_id,
+                detections.confidence
             )
         ]
         annotated_frame = frame.copy()
-        annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
-        annotated_frame = box_annotator.annotate(scene=annotated_frame, detections=detections_in_zone)
+        annotated_frame = trace_annotator.annotate(scene=annotated_frame, detections=detections)
+        annotated_frame = box_annotator.annotate(scene=annotated_frame, detections=detections)
         annotated_frame = label_annotator.annotate(
-            scene=annotated_frame, detections=detections_in_zone, labels=labels
+            scene=annotated_frame, detections=detections, labels=labels
         )
-        annotated_frame = zone_annotator.annotate(scene=annotated_frame)
-
-        # Draw left line
+        annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=start_line_zone)
+        annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=end_line_zone)
         cv2.line(annotated_frame, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
 
         # Add count text

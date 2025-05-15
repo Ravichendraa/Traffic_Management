@@ -1,7 +1,8 @@
-./models
-./outputs
+/models
+/outputs
+
 app.log
-./uploads
+/uploads
 yolo12_100epoch.pt
 yolov8n.pt
 aap.ipynb
