@@ -58,7 +58,7 @@ SELECTED_CLASS_IDS = [name_to_id[cls] for cls in SELECTED_CLASS_NAMES if cls in 
 logger.info(f"Selected Class IDs: {SELECTED_CLASS_IDS}")
 
 # Global state
-progress = {'status': 'idle', 'progress': 0, 'summary': {}, 'live_counts': {}}
+progress = {'status': 'idle', 'progress': 0, 'summary': {}, 'live_counts': {}, 'entire_screen': False}
 lock = threading.Lock()
 
 # Annotators
@@ -80,6 +80,58 @@ def initialize_tracker():
         minimum_consecutive_frames=3
     )
 
+def estimate_text_width(text, text_scale=1.0):
+    """Estimate text width in pixels (approximate)."""
+    char_width = 12 * text_scale
+    return int(len(text) * char_width)
+
+def draw_count_summary(frame, counts, width, is_video=False):
+    """Draw the count summary on the frame with a uniform background."""
+    total_count = sum(counts.values()) if not is_video else sum(counts.get(cls, 0) for cls in counts)
+    text_scale = 1.0
+    text_thickness = 2
+    padding = 20
+    y_offset = 50
+    line_height = 40
+
+    # Prepare text lines
+    text_lines = [f"Total: {total_count}"]
+    for class_name in sorted(counts.keys()):
+        text_lines.append(f"{class_name}: {counts[class_name]}")
+
+    # Calculate max width for uniform background
+    max_text_width = max(estimate_text_width(text, text_scale) for text in text_lines)
+    rect_width = max_text_width + 2 * padding
+    rect_height = len(text_lines) * line_height + padding
+    rect_top_left = (width - rect_width - padding, 30)
+    rect_bottom_right = (width - padding, 30 + rect_height)
+
+    # Draw a single uniform background rectangle
+    cv2.rectangle(
+        frame,
+        rect_top_left,
+        rect_bottom_right,
+        (0, 0, 0),
+        -1
+    )
+
+    # Draw text lines with uniform alignment
+    for idx, text in enumerate(text_lines):
+        text_width = estimate_text_width(text, text_scale)
+        text_anchor = Point(width - rect_width + padding, y_offset)
+        frame = sv.draw_text(
+            scene=frame,
+            text=text,
+            text_anchor=text_anchor,
+            text_color=Color.WHITE,
+            background_color=Color.BLACK,
+            text_thickness=text_thickness,
+            text_scale=text_scale
+        )
+        y_offset += line_height
+
+    return frame
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -100,28 +152,51 @@ def upload_file():
         logger.error(f"Invalid media_type: {media_type}")
         return jsonify({'error': 'Invalid media_type'}), 400
 
-    try:
-        left_line = float(request.form.get('left_line', 0))
-        start_line = ast.literal_eval(request.form.get('start_line', '[[0,0],[0,0]]'))
-        end_line = ast.literal_eval(request.form.get('end_line', '[[0,0],[0,0]]'))
-        distance = float(request.form.get('distance', 10)) if media_type == 'video' else 0
-    except (ValueError, SyntaxError, TypeError) as e:
-        logger.error(f"Invalid coordinate or distance format: {str(e)}")
-        return jsonify({'error': 'Invalid coordinate or distance format'}), 400
+    # Log the entire form data for debugging
+    logger.debug(f"Received form data: {request.form}")
 
-    # Validate coordinates
-    if not (isinstance(start_line, list) and isinstance(end_line, list) and
-            len(start_line) == 2 and len(end_line) == 2 and
-            all(isinstance(p, list) and len(p) == 2 for p in start_line + end_line)):
-        logger.error("Invalid line points format")
-        return jsonify({'error': 'Start and end lines must be [[x1,y1], [x2,y2]]'}), 400
+    # Get entire_screen flag
+    entire_screen = request.form.get('entire_screen', 'false').lower() == 'true'
+    left_line = 0
+    start_line = [[0, 0], [0, 0]]
+    end_line = [[0, 0], [0, 0]]
+    distance = 0
+
+    if not entire_screen:
+        try:
+            left_line = float(request.form.get('left_line', 0))
+            start_line_str = request.form.get('start_line', '[[0,0],[0,0]]')
+            end_line_str = request.form.get('end_line', '[[0,0],[0,0]]')
+            start_line = ast.literal_eval(start_line_str)
+            end_line = ast.literal_eval(end_line_str)
+            distance = float(request.form.get('distance', 10)) if media_type == 'video' else 0
+        except (ValueError, SyntaxError, TypeError) as e:
+            logger.error(f"Invalid coordinate or distance format: {str(e)}")
+            return jsonify({'error': 'Invalid coordinate or distance format'}), 400
+
+        # Validate coordinates
+        if not (isinstance(start_line, list) and isinstance(end_line, list) and
+                len(start_line) == 2 and len(end_line) == 2 and
+                all(isinstance(p, list) and len(p) == 2 for p in start_line + end_line)):
+            logger.error("Invalid line points format")
+            return jsonify({'error': 'Start and end lines must be [[x1,y1], [x2,y2]]'}), 400
+
+    # Log input parameters for debugging
+    logger.debug(f"Upload inputs: media_type={media_type}, entire_screen={entire_screen}, "
+                 f"left_line={left_line}, start_line={start_line}, end_line={end_line}, distance={distance}")
 
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(file_path)
 
     output_filename = f"processed_{file.filename}"
     with lock:
-        progress = {'status': 'processing', 'progress': 0, 'summary': {}, 'live_counts': {}}
+        progress = {
+            'status': 'processing',
+            'progress': 0,
+            'summary': {},
+            'live_counts': {},
+            'entire_screen': entire_screen
+        }
 
     thread = threading.Thread(
         target=process_media,
@@ -144,7 +219,8 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                     'status': 'complete',
                     'progress': 100,
                     'summary': summary['counts'],
-                    'live_counts': {}
+                    'live_counts': {},
+                    'entire_screen': progress['entire_screen']
                 }
         else:
             summary = process_video(file_path, left_line, start_line, end_line, distance, output_filename)
@@ -154,7 +230,8 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                     'status': 'complete',
                     'progress': 100,
                     'summary': summary['counts'],
-                    'live_counts': summary['live_counts']
+                    'live_counts': summary['live_counts'],
+                    'entire_screen': progress['entire_screen']
                 }
         logger.info(f"Completed processing {media_type}: {file_path}")
     except Exception as e:
@@ -164,7 +241,8 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                 'status': 'error',
                 'progress': 0,
                 'summary': {'error': str(e)},
-                'live_counts': {}
+                'live_counts': {},
+                'entire_screen': False
             }
     finally:
         if os.path.exists(file_path):
@@ -175,17 +253,18 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                 logger.warning(f"Failed to unlink file {file_path}: {str(e)}")
 
 def process_image(image_path, left_line, start_line, end_line):
-    """Process an image to count vehicles crossing start or end lines with confidence > 0.45."""
+    """Process an image to count vehicles, zone-free for entire screen or with LineZone."""
+    with lock:
+        entire_screen = progress['entire_screen']
+    logger.debug(f"process_image: entire_screen={entire_screen}, left_line={left_line}, "
+                 f"start_line={start_line}, end_line={end_line}")
+
     image = cv2.imread(image_path)
     if image is None:
         logger.error(f"Failed to load image: {image_path}")
         raise ValueError('Failed to load image')
 
     height, width = image.shape[:2]
-    # Define LineZones
-    start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
-    end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
-
     results = model(image, verbose=False, device=device)[0]
     detections = sv.Detections.from_ultralytics(results)
     detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
@@ -194,30 +273,43 @@ def process_image(image_path, left_line, start_line, end_line):
     conf_mask = detections.confidence > CONFIDENCE_THRESHOLD
     detections = detections[conf_mask]
 
-    # Filter by left_line
-    left_mask = detections.xyxy[:, 0] >= left_line
-    detections = detections[left_mask]
-
-    # Count vehicles crossing lines
     counts = defaultdict(int)
-    processed_ids = set()  # Avoid double-counting
-    for idx, (xyxy, class_id, confidence) in enumerate(
-        zip(detections.xyxy, detections.class_id, detections.confidence)
-    ):
-        if idx in processed_ids:
-            continue
-        x1, y1, x2, y2 = xyxy
-        centroid = Point((x1 + x2) / 2, (y1 + y2) / 2)
-        single_detection = sv.Detections(
-            xyxy=np.array([xyxy]),
-            confidence=np.array([confidence]),
-            class_id=np.array([class_id]),
-            tracker_id=None
-        )
-        if start_line_zone.trigger(detections=single_detection) or end_line_zone.trigger(detections=single_detection):
+
+    if entire_screen:
+        # Entire screen: Count all detections without zones
+        logger.debug("Entire screen mode: Counting all detections without zones")
+        for class_id in detections.class_id:
             class_name = model.model.names[class_id]
             counts[class_name] += 1
-            processed_ids.add(idx)
+    else:
+        # Specific region: Use LineZone and left_line
+        logger.debug("Specific region mode: Creating LineZone objects")
+        start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
+        end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
+
+        # Filter by left_line
+        left_mask = detections.xyxy[:, 0] >= left_line
+        detections = detections[left_mask]
+
+        # Count vehicles crossing lines
+        processed_ids = set()
+        for idx, (xyxy, class_id, confidence) in enumerate(
+            zip(detections.xyxy, detections.class_id, detections.confidence)
+        ):
+            if idx in processed_ids:
+                continue
+            x1, y1, x2, y2 = xyxy
+            centroid = Point((x1 + x2) / 2, (y1 + y2) / 2)
+            single_detection = sv.Detections(
+                xyxy=np.array([xyxy]),
+                confidence=np.array([confidence]),
+                class_id=np.array([class_id]),
+                tracker_id=None
+            )
+            if start_line_zone.trigger(detections=single_detection) or end_line_zone.trigger(detections=single_detection):
+                class_name = model.model.names[class_id]
+                counts[class_name] += 1
+                processed_ids.add(idx)
 
     # Annotate image
     labels = [
@@ -229,29 +321,34 @@ def process_image(image_path, left_line, start_line, end_line):
     annotated_image = label_annotator.annotate(
         scene=annotated_image, detections=detections, labels=labels
     )
-    annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=start_line_zone)
-    annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=end_line_zone)
-    cv2.line(annotated_image, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
 
-    # Add count text
-    total_count = sum(counts.values())
-    count_text = f"Total: {total_count}"
-    annotated_image = sv.draw_text(
-        scene=annotated_image,
-        text=count_text,
-        text_anchor=Point(50, 50),
-        text_color=Color.WHITE,
-        background_color=Color.BLACK,
-        text_thickness=1,
-        text_scale=0.8
-    )
+    # Draw lines only in specific region mode
+    if not entire_screen:
+        logger.debug(f"Drawing lines: left_line={left_line}, start_line={start_line}, end_line={end_line}")
+        annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=start_line_zone)
+        annotated_image = line_annotator.annotate(frame=annotated_image, line_counter=end_line_zone)
+        if left_line > 0:
+            logger.debug(f"Drawing left_line at x={left_line}")
+            cv2.line(annotated_image, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
+        else:
+            logger.debug("left_line is 0, skipping left_line drawing")
+    else:
+        logger.debug("Entire screen mode: Skipping all line drawing")
 
-    logger.debug(f"Image processed, counts: {dict(counts)}")
-    return {'image': annotated_image, 'counts': {k: {'count': v, 'average_speed': 0} for k, v in counts.items()}}
+    # Draw count summary
+    annotated_image = draw_count_summary(annotated_image, counts, width)
+
+    logger.debug(f"Image processed, entire_screen={entire_screen}, counts: {dict(counts)}")
+    return {'image': annotated_image, 'counts': {k: {'count': v} for k, v in counts.items()}}
 
 def process_video(video_path, left_line, start_line, end_line, distance, output_filename):
-    """Process a video to count vehicles and compute speeds with confidence > 0.45, using reference logic."""
+    """Process a video to count vehicles, zone-free for entire screen or with LineZone."""
     global progress
+    with lock:
+        entire_screen = progress['entire_screen']
+    logger.debug(f"process_video: entire_screen={entire_screen}, left_line={left_line}, "
+                 f"start_line={start_line}, end_line={end_line}")
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         logger.error(f"Failed to open video: {video_path}")
@@ -266,15 +363,22 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    # Define LineZones
-    start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
-    end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
     tracker = initialize_tracker()
     tracker.reset()
 
     counts = defaultdict(lambda: {'count': set(), 'speeds': [], 'cross_times': {}})
     live_counts = defaultdict(int)
     frame_count = 0
+
+    # Only create LineZone objects if not in entire screen mode
+    start_line_zone = None
+    end_line_zone = None
+    if not entire_screen:
+        logger.debug("Specific region mode: Creating LineZone objects")
+        start_line_zone = LineZone(start=Point(*start_line[0]), end=Point(*start_line[1]))
+        end_line_zone = LineZone(start=Point(*end_line[0]), end=Point(*end_line[1]))
+    else:
+        logger.debug("Entire screen mode: Skipping LineZone creation")
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -291,46 +395,62 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
 
         detections = tracker.update_with_detections(detections=detections)
 
-        # Filter by left_line
-        left_mask = detections.xyxy[:, 0] >= left_line
-        detections = detections[left_mask]
+        if entire_screen:
+            # Entire screen: Count all tracked detections without zones
+            logger.debug("Entire screen mode: Counting all detections without zones")
+            current_ids = detections.tracker_id.astype(int).tolist()
+            for class_id, tracker_id in zip(detections.class_id, detections.tracker_id):
+                class_name = model.model.names[class_id]
+                counts[class_name]['count'].add(tracker_id)
+                live_counts[class_name] = len(counts[class_name]['count'])
+        else:
+            # Specific region: Use LineZone and left_line
+            logger.debug("Specific region mode: Using LineZone and left_line")
+            # Filter by left_line
+            left_mask = detections.xyxy[:, 0] >= left_line
+            detections = detections[left_mask]
 
-        # Update counts and speeds
-        current_ids = detections.tracker_id.astype(int).tolist()
-        for idx, (class_id, tracker_id, xyxy, confidence) in enumerate(
-            zip(detections.class_id, detections.tracker_id, detections.xyxy, detections.confidence)
-        ):
-            class_name = model.model.names[class_id]
-            x1, y1, x2, y2 = xyxy
-            centroid = Point((x1 + x2) / 2, (y1 + y2) / 2)
-            track_key = (class_name, tracker_id)
+            # Update counts and speeds
+            current_ids = detections.tracker_id.astype(int).tolist()
+            for idx, (class_id, tracker_id, xyxy, confidence) in enumerate(
+                zip(detections.class_id, detections.tracker_id, detections.xyxy, detections.confidence)
+            ):
+                class_name = model.model.names[class_id]
+                x1, y1, x2, y2 = xyxy
+                track_key = (class_name, tracker_id)
 
-            # Check line crossings
-            single_detection = sv.Detections(
-                xyxy=np.array([xyxy]),
-                confidence=np.array([confidence]),
-                class_id=np.array([class_id]),
-                tracker_id=np.array([tracker_id])
-            )
-            start_crossed = start_line_zone.trigger(detections=single_detection)
-            end_crossed = end_line_zone.trigger(detections=single_detection)
+                # Check line crossings
+                single_detection = sv.Detections(
+                    xyxy=np.array([xyxy]),
+                    confidence=np.array([confidence]),
+                    class_id=np.array([class_id]),
+                    tracker_id=np.array([tracker_id])
+                )
+                start_crossed = start_line_zone.trigger(detections=single_detection)
+                end_crossed = end_line_zone.trigger(detections=single_detection)
 
-            if start_crossed and track_key not in counts[class_name]['cross_times']:
-                counts[class_name]['cross_times'][track_key] = {'start_frame': frame_count}
-            if end_crossed and track_key in counts[class_name]['cross_times'] and \
-               'end_frame' not in counts[class_name]['cross_times'][track_key]:
-                start_frame = counts[class_name]['cross_times'][track_key].get('start_frame')
-                if start_frame is not None:
-                    counts[class_name]['cross_times'][track_key]['end_frame'] = frame_count
-                    frames_taken = frame_count - start_frame
-                    if frames_taken > 0 and distance > 0:
-                        speed_mps = distance / (frames_taken / fps)
-                        speed_kmph = speed_mps * 3.6
-                        counts[class_name]['speeds'].append(speed_kmph)
-                    counts[class_name]['count'].add(tracker_id)
-                    live_counts[class_name] = len(counts[class_name]['count'])
+                # Record crossing times
+                if start_crossed and track_key not in counts[class_name]['cross_times']:
+                    counts[class_name]['cross_times'][track_key] = {'start_frame': frame_count}
+                    logger.debug(f"Start crossed: {track_key}, frame: {frame_count}")
+                if end_crossed and track_key in counts[class_name]['cross_times']:
+                    if 'end_frame' not in counts[class_name]['cross_times'][track_key]:
+                        counts[class_name]['cross_times'][track_key]['end_frame'] = frame_count
+                        logger.debug(f"End crossed: {track_key}, frame: {frame_count}")
+                        start_frame = counts[class_name]['cross_times'][track_key].get('start_frame')
+                        if start_frame is not None:
+                            frames_taken = frame_count - start_frame
+                            logger.debug(f"Frames taken: {frames_taken}, distance: {distance}, fps: {fps}")
+                            if frames_taken > 0 and distance > 0:
+                                speed_mps = distance / (frames_taken / fps)
+                                speed_kmph = speed_mps * 3.6
+                                counts[class_name]['speeds'].append(speed_kmph)
+                                logger.debug(f"Speed calculated: {speed_kmph} kmph for {track_key}")
+                            counts[class_name]['count'].add(tracker_id)
+                            live_counts[class_name] = len(counts[class_name]['count'])
+                            logger.debug(f"Updated count: {class_name}: {live_counts[class_name]}")
 
-        # Annotate frame (adapted from reference)
+        # Annotate frame
         labels = [
             f"#{tracker_id} {model.model.names[class_id]} {conf:.2f}"
             for class_id, tracker_id, conf in zip(
@@ -345,22 +465,22 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
         annotated_frame = label_annotator.annotate(
             scene=annotated_frame, detections=detections, labels=labels
         )
-        annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=start_line_zone)
-        annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=end_line_zone)
-        cv2.line(annotated_frame, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
 
-        # Add count text
-        total_count = sum(len(c['count']) for c in counts.values())
-        count_text = f"Current: {len(current_ids)} | Total: {total_count}"
-        annotated_frame = sv.draw_text(
-            scene=annotated_frame,
-            text=count_text,
-            text_anchor=Point(50, 50),
-            text_color=Color.WHITE,
-            background_color=Color.BLACK,
-            text_thickness=1,
-            text_scale=0.8
-        )
+        # Draw lines only in specific region mode
+        if not entire_screen:
+            logger.debug(f"Drawing lines: left_line={left_line}, start_line={start_line}, end_line={end_line}")
+            annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=start_line_zone)
+            annotated_frame = line_annotator.annotate(frame=annotated_frame, line_counter=end_line_zone)
+            if left_line > 0:
+                logger.debug(f"Drawing left_line at x={left_line}")
+                cv2.line(annotated_frame, (int(left_line), 0), (int(left_line), height), (255, 0, 0), 2)
+            else:
+                logger.debug("left_line is 0, skipping left_line drawing")
+        else:
+            logger.debug("Entire screen mode: Skipping all line drawing")
+
+        # Draw count summary
+        annotated_frame = draw_count_summary(annotated_frame, live_counts, width, is_video=True)
 
         out.write(annotated_frame)
         frame_count += 1
@@ -371,16 +491,24 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
     # Compute final counts and average speeds
     final_counts = {}
     for cls in counts:
-        final_counts[cls] = {
-            'count': len(counts[cls]['count']),
-            'average_speed': (
+        count = len(counts[cls]['count'])
+        if entire_screen:
+            logger.debug(f"Entire screen mode: Excluding average_speed for {cls}")
+            final_counts[cls] = {'count': count}
+        else:
+            avg_speed = (
                 sum(counts[cls]['speeds']) / len(counts[cls]['speeds'])
                 if counts[cls]['speeds'] else 0
             )
-        }
+            logger.debug(f"Specific region mode: Including average_speed for {cls}: {avg_speed}")
+            final_counts[cls] = {
+                'count': count,
+                'average_speed': avg_speed
+            }
+            logger.debug(f"Final for {cls}: count={count}, avg_speed={avg_speed}, speeds={counts[cls]['speeds']}")
 
     cap.release()
-    logger.debug(f"Video processed, counts: {final_counts}")
+    logger.debug(f"Video processed, entire_screen={entire_screen}, counts: {final_counts}")
     return {'video_writer': out, 'counts': final_counts, 'live_counts': live_counts}
 
 @app.route('/get-first-frame', methods=['POST'])
@@ -467,12 +595,18 @@ def get_results(filename):
             return jsonify({'error': 'Processing not complete'}), 400
 
         summary_list = []
+        entire_screen = progress.get('entire_screen', False)
         for vehicle_class, data in progress['summary'].items():
-            summary_list.append({
+            entry = {
                 'vehicle_class': vehicle_class,
-                'count': data['count'],
-                'average_speed': round(data['average_speed'], 1)
-            })
+                'count': data['count']
+            }
+            if not entire_screen and 'average_speed' in data:
+                entry['average_speed'] = round(data['average_speed'], 1)
+                logger.debug(f"Including average_speed in results for {vehicle_class}: {entry['average_speed']}")
+            else:
+                logger.debug(f"Excluding average_speed in results for {vehicle_class} (entire_screen={entire_screen})")
+            summary_list.append(entry)
 
         response = {
             'processed_media_url': f'/outputs/{filename}',
