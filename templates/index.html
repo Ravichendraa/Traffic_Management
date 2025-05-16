@@ -208,6 +208,49 @@
       background-color: rgba(212, 175, 55, 0.7);
       z-index: 5;
     }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1002;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-content {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 20px;
+      border-radius: 15px;
+      width: 90%;
+      max-width: 500px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+      position: relative;
+    }
+    .close-modal {
+      position: absolute;
+      top: 10px;
+      right: 15px;
+      font-size: 24px;
+      cursor: pointer;
+      color: #1e3c72;
+    }
+    .modal-content h2 {
+      color: #1e3c72;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .modal-content select {
+      width: 100%;
+      padding: 10px;
+      border-radius: 10px;
+      border: 2px solid #d4af37;
+      margin-bottom: 20px;
+      background: rgba(255, 255, 255, 0.9);
+      color: #1e3c72;
+    }
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(20px); }
       to { opacity: 1; transform: translateY(0); }
@@ -342,8 +385,24 @@
       
       <div id="download-section" class="text-center mt-6">
         <a id="download-link" class="btn-primary"><i class="fas fa-download mr-2"></i> Download Processed Media</a>
+        <button id="download-summary-btn" class="btn-primary ml-4"><i class="fas fa-file-export mr-2"></i> Download Summary</button>
         <button id="start-new" class="btn-secondary ml-4"><i class="fas fa-plus mr-2"></i> Start New Detection</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Download Summary Modal -->
+  <div id="download-modal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal">×</span>
+      <h2>Select Format</h2>
+      <form id="download-form" method="POST" action="/download-summary">
+        <select id="download-format" name="format" class="input-field">
+          <option value="excel">Excel</option>
+          <option value="pdf">PDF</option>
+        </select>
+        <button type="submit" class="btn-primary w-full"><i class="fas fa-download mr-2"></i> Download</button>
+      </form>
     </div>
   </div>
 
@@ -382,6 +441,7 @@
     const summaryTableBody = document.getElementById('summary-table-body');
     const speedHeader = document.getElementById('speed-header');
     const downloadLink = document.getElementById('download-link');
+    const downloadSummaryBtn = document.getElementById('download-summary-btn');
     const startNewBtn = document.getElementById('start-new');
     const mediaContainer = document.getElementById('media-container');
     const liveCounter = document.getElementById('live-counter');
@@ -392,6 +452,10 @@
     const previewCanvas = document.getElementById('preview-canvas');
     const ctx = previewCanvas.getContext('2d');
     const polygonPointsContainer = document.getElementById('polygon-points');
+    const downloadModal = document.getElementById('download-modal');
+    const closeModal = document.querySelector('.close-modal');
+    const downloadForm = document.getElementById('download-form');
+    const downloadFormat = document.getElementById('download-format');
 
     // State variables
     let selectedFile = null;
@@ -405,6 +469,53 @@
     let isEntireScreen = false;
     let startTime = null;
     let estimatedTotalTime = null;
+
+    // Modal Handlers
+    downloadSummaryBtn.addEventListener('click', () => {
+      downloadModal.style.display = 'flex';
+    });
+
+    closeModal.addEventListener('click', () => {
+      downloadModal.style.display = 'none';
+    });
+
+    window.addEventListener('click', (e) => {
+      if (e.target === downloadModal) {
+        downloadModal.style.display = 'none';
+      }
+    });
+
+    downloadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      downloadModal.style.display = 'none';
+
+      const format = downloadFormat.value;
+      const formData = new FormData();
+      formData.append('format', format);
+
+      try {
+        const response = await fetch('/download-summary', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to download summary');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `traffic_summary.${format === 'excel' ? 'xlsx' : 'pdf'}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        alert('Error downloading summary: ' + error.message);
+      }
+    });
 
     // Navbar Navigation
     navHome.addEventListener('click', (e) => {
@@ -740,6 +851,7 @@
         body: formData 
       })
       .then(response => {
+        console.log('Upload response status:', response.status);
         if (!response.ok) {
           throw new Error('Server responded with an error');
         }
@@ -777,8 +889,15 @@
     async function checkStatus(filename) {
       const interval = setInterval(async () => {
         try {
+          console.log('Fetching status for filename:', filename);
           const response = await fetch('/status');
+          console.log('Status response status:', response.status);
+          if (!response.ok) {
+            throw new Error('Status check failed with status: ' + response.status);
+          }
           const statusData = await response.json();
+          console.log('Status data:', statusData);
+
           progressFill.style.width = statusData.progress + '%';
           progressPercentage.textContent = Math.round(statusData.progress) + '%';
           
@@ -804,21 +923,29 @@
           }
           
           if (statusData.status === 'complete') {
+            console.log('Status is complete, fetching results for:', filename);
             clearInterval(interval);
             const resultsResponse = await fetch(`/get-results/${filename}`);
+            console.log('Results response status:', resultsResponse.status);
+            if (!resultsResponse.ok) {
+              throw new Error('Results fetch failed with status: ' + resultsResponse.status);
+            }
             const resultsData = await resultsResponse.json();
+            console.log('Results data:', resultsData);
             if (resultsData.error) {
               handleProcessingError(new Error(resultsData.error));
               return;
             }
             handleProcessingSuccess(resultsData);
           } else if (statusData.status === 'error') {
+            console.log('Status is error:', statusData.summary.error);
             clearInterval(interval);
             handleProcessingError(new Error(statusData.summary.error));
           } else {
             statusDiv.textContent = `Processing... (${Math.round(statusData.progress)}%)`;
           }
         } catch (error) {
+          console.error('Error in checkStatus:', error);
           clearInterval(interval);
           handleProcessingError(error);
         }
@@ -838,12 +965,6 @@
         imgElement.className = 'w-full';
         mediaContainer.appendChild(imgElement);
       }
-       /* else {
-        const message = document.createElement('p');
-        message.textContent = 'Video playback is not supported in the browser. Please download the processed video and play it using VLC media player.';
-        message.className = 'text-center text-lg';
-        mediaContainer.appendChild(message);
-      } */
       
       summaryTableBody.innerHTML = '';
       data.summary.forEach(item => {

@@ -13,6 +13,11 @@ from ultralytics import YOLO
 from supervision import LineZone, LineZoneAnnotator, BoxAnnotator, LabelAnnotator, TraceAnnotator, ByteTrack, Color, Point
 import supervision as sv
 import torch
+import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -68,7 +73,7 @@ trace_annotator = TraceAnnotator(thickness=2, trace_length=50, color=Color.GREEN
 line_annotator = LineZoneAnnotator(thickness=2, color=Color.BLUE)
 
 # Confidence threshold
-CONFIDENCE_THRESHOLD = 0.45
+CONFIDENCE_THRESHOLD = 0
 
 def initialize_tracker():
     """Initialize ByteTrack for vehicle tracking."""
@@ -76,7 +81,7 @@ def initialize_tracker():
         track_activation_threshold=0.25,
         lost_track_buffer=30,
         minimum_matching_threshold=0.8,
-        frame_rate=30,
+        frame_rate=60,
         minimum_consecutive_frames=3
     )
 
@@ -615,6 +620,110 @@ def get_results(filename):
         }
         logger.debug(f"Results for {filename}: {response}")
         return jsonify(response)
+
+@app.route('/download-summary', methods=['POST'])
+def download_summary():
+    """Generate and download the summary as Excel or PDF."""
+    format_type = request.form.get('format')
+    if format_type not in ['excel', 'pdf']:
+        logger.error(f"Invalid format type: {format_type}")
+        return jsonify({'error': 'Invalid format type'}), 400
+
+    with lock:
+        if progress['status'] != 'complete':
+            logger.error("Processing not complete for summary download")
+            return jsonify({'error': 'Processing not complete'}), 400
+
+        summary_list = []
+        entire_screen = progress.get('entire_screen', False)
+        for vehicle_class, data in progress['summary'].items():
+            entry = {
+                'Vehicle Class': vehicle_class,
+                'Count': data['count']
+            }
+            if not entire_screen and 'average_speed' in data:
+                entry['Average Speed (km/h)'] = round(data['average_speed'], 1)
+            summary_list.append(entry)
+
+    # Create DataFrame
+    df = pd.DataFrame(summary_list)
+
+    if format_type == 'excel':
+        # Generate Excel file
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Traffic Summary', index=False, startrow=2)
+            # Access the workbook and worksheet to add the heading
+            workbook = writer.book
+            worksheet = workbook['Traffic Summary']
+            worksheet['A1'] = 'Traffic Management Detections'
+            worksheet['A1'].font = writer.book.add_format({'bold': True, 'font_size': 16})
+            # Adjust column widths
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = max_length + 2
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+
+        output.seek(0)
+        logger.info("Generated Excel summary for download")
+        return send_file(
+            output,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name='traffic_summary.xlsx'
+        )
+
+    else:  # format_type == 'pdf'
+        # Generate PDF file
+        output = io.BytesIO()
+        doc = SimpleDocTemplate(output, pagesize=letter)
+        elements = []
+
+        # Define styles
+        styles = getSampleStyleSheet()
+        title_style = styles['Heading1']
+        title_style.alignment = 1  # Center
+
+        # Add heading
+        elements.append(Paragraph("Traffic Management Detections", title_style))
+        elements.append(Spacer(1, 12))
+
+        # Prepare table data
+        table_data = [list(df.columns)]  # Headers
+        for _, row in df.iterrows():
+            table_data.append(list(row))
+
+        # Create table
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+
+        output.seek(0)
+        logger.info("Generated PDF summary for download")
+        return send_file(
+            output,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name='traffic_summary.pdf'
+        )
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)
