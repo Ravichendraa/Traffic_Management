@@ -92,6 +92,21 @@
       background: white;
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     }
+    .btn-info {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 16px;
+      border-radius: 50px;
+      color: #1e3c72;
+      font-weight: bold;
+      border: 1px solid #d4af37;
+      transition: all 0.3s ease;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    }
+    .btn-info:hover {
+      transform: translateY(-2px);
+      background: white;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    }
     .dropzone {
       border: 3px dashed #d4af37;
       padding: 40px;
@@ -251,6 +266,13 @@
       background: rgba(255, 255, 255, 0.9);
       color: #1e3c72;
     }
+    .result-image {
+      max-width: 100%;
+      height: auto;
+      border-radius: 10px;
+      margin: 20px 0;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(20px); }
       to { opacity: 1; transform: translateY(0); }
@@ -271,7 +293,7 @@
   </nav>
 
   <div class="container flex flex-col items-center justify-center py-12">
-    <!-- Live Counter (Moved outside other divs) -->
+    <!-- Live Counter -->
     <div id="live-counter" class="live-counter hidden">
       <p>Live Vehicle Count</p>
       <div id="counter-content"></div>
@@ -280,6 +302,13 @@
     <!-- Initial Selection Screen -->
     <div id="selection-screen" class="card w-full md:w-3/4 lg:w-2/3 animate-slide-in">
       <h2 class="text-2xl font-semibold mb-6 text-center">Choose Media Type</h2>
+      <div class="flex justify-center gap-4 mb-6">
+        <select id="model-select" class="input-field w-64">
+          <option value="standard">Standard YOLO12x Model</option>
+          <option value="customized" selected>Customized Model with 9 Classes</option>
+        </select>
+        <button id="model-info-btn" class="btn-info"><i class="fas fa-info-circle"></i></button>
+      </div>
       <div class="flex justify-center gap-6">
         <button id="image-select" class="btn-primary"><i class="fas fa-image mr-2"></i> Upload Image</button>
         <button id="video-select" class="btn-primary"><i class="fas fa-video mr-2"></i> Upload Video</button>
@@ -356,7 +385,7 @@
 
     <!-- Progress and Results -->
     <div id="progress-container" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
-      <div class="text-xl font-semibold mb-4 text-center" id="status">Processing...</div>
+      <div class="text-xl font-semibold mb historic_4 text-center" id="status">Processing...</div>
       <div class="progress-bar">
         <div id="progress-fill" class="progress-fill"></div>
       </div>
@@ -369,7 +398,10 @@
     <div id="results" class="card w-full md:w-3/4 lg:w-2/3 hidden animate-slide-in">
       <h2 class="text-2xl font-semibold mb-6 text-center">Detection Results</h2>
       
-      <div id="media-container" class="mb-6 rounded-lg overflow-hidden shadow-lg"></div>
+      <div id="result-image-container" class="hidden text-center">
+        <h3 class="text-xl font-semibold mb-4">Processed Image</h3>
+        <img id="result-image" class="result-image" alt="Processed Image" />
+      </div>
       
       <h3 class="text-xl font-semibold mb-4">Vehicle Summary</h3>
       <table class="summary-table">
@@ -384,7 +416,7 @@
       </table>
       
       <div id="download-section" class="text-center mt-6">
-        <a id="download-link" class="btn-primary"><i class="fas fa-download mr-2"></i> Download Processed Media</a>
+        <a id="download-media-link" class="btn-primary"><i class="fas fa-download mr-2"></i> Download Processed Media</a>
         <button id="download-summary-btn" class="btn-primary ml-4"><i class="fas fa-file-export mr-2"></i> Download Summary</button>
         <button id="start-new" class="btn-secondary ml-4"><i class="fas fa-plus mr-2"></i> Start New Detection</button>
       </div>
@@ -396,13 +428,23 @@
     <div class="modal-content">
       <span class="close-modal">×</span>
       <h2>Select Format</h2>
-      <form id="download-form" method="POST" action="/download-summary">
-        <select id="download-format" name="format" class="input-field">
-          <option value="excel">Excel</option>
-          <option value="pdf">PDF</option>
-        </select>
-        <button type="submit" class="btn-primary w-full"><i class="fas fa-download mr-2"></i> Download</button>
-      </form>
+      <select id="download-format" name="format" class="input-field">
+        <option value="excel">Excel</option>
+        <option value="pdf">PDF</option>
+      </select>
+      <button id="download-btn" class="btn-primary w-full"><i class="fas fa-download mr-2"></i> Download</button>
+    </div>
+  </div>
+
+  <!-- Model Info Modal -->
+  <div id="model-info-modal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal">×</span>
+      <h2>Model Information</h2>
+      <div id="model-info-content">
+        <p id="model-description"></p>
+        <p id="model-classes"></p>
+      </div>
     </div>
   </div>
 
@@ -440,10 +482,9 @@
     const loader = document.getElementById('loader');
     const summaryTableBody = document.getElementById('summary-table-body');
     const speedHeader = document.getElementById('speed-header');
-    const downloadLink = document.getElementById('download-link');
+    const downloadMediaLink = document.getElementById('download-media-link');
     const downloadSummaryBtn = document.getElementById('download-summary-btn');
     const startNewBtn = document.getElementById('start-new');
-    const mediaContainer = document.getElementById('media-container');
     const liveCounter = document.getElementById('live-counter');
     const counterContent = document.getElementById('counter-content');
     const navHome = document.getElementById('nav-home');
@@ -453,9 +494,16 @@
     const ctx = previewCanvas.getContext('2d');
     const polygonPointsContainer = document.getElementById('polygon-points');
     const downloadModal = document.getElementById('download-modal');
-    const closeModal = document.querySelector('.close-modal');
-    const downloadForm = document.getElementById('download-form');
+    const closeModal = document.querySelectorAll('.close-modal');
     const downloadFormat = document.getElementById('download-format');
+    const downloadBtn = document.getElementById('download-btn');
+    const modelSelect = document.getElementById('model-select');
+    const modelInfoBtn = document.getElementById('model-info-btn');
+    const modelInfoModal = document.getElementById('model-info-modal');
+    const modelDescription = document.getElementById('model-description');
+    const modelClasses = document.getElementById('model-classes');
+    const resultImageContainer = document.getElementById('result-image-container');
+    const resultImage = document.getElementById('result-image');
 
     // State variables
     let selectedFile = null;
@@ -469,23 +517,42 @@
     let isEntireScreen = false;
     let startTime = null;
     let estimatedTotalTime = null;
+    let processedFileName = null;
+
+    // Model info configurations
+    const modelInfo = {
+      'standard': {
+        description: 'Standard YOLO12x model with 4 classes.',
+        classes: 'Classes: Car, Motorcycle, Truck, Bus'
+      },
+      'customized': {
+        description: 'Customized model built upon YOLO12n with 9 classes.',
+        classes: 'Classes: Auto-Rickshaw, Bicycle, Bus, Car, Cycle_rickshaw, E-Rickshaw, Motorcycle, Tractor, Truck'
+      }
+    };
 
     // Modal Handlers
     downloadSummaryBtn.addEventListener('click', () => {
       downloadModal.style.display = 'flex';
     });
 
-    closeModal.addEventListener('click', () => {
-      downloadModal.style.display = 'none';
+    closeModal.forEach(btn => {
+      btn.addEventListener('click', () => {
+        downloadModal.style.display = 'none';
+        modelInfoModal.style.display = 'none';
+      });
     });
 
     window.addEventListener('click', (e) => {
       if (e.target === downloadModal) {
         downloadModal.style.display = 'none';
       }
+      if (e.target === modelInfoModal) {
+        modelInfoModal.style.display = 'none';
+      }
     });
 
-    downloadForm.addEventListener('submit', async (e) => {
+    downloadBtn.addEventListener('click', async (e) => {
       e.preventDefault();
       downloadModal.style.display = 'none';
 
@@ -500,7 +567,13 @@
         });
 
         if (!response.ok) {
-          throw new Error('Failed to download summary');
+          const text = await response.text();
+          try {
+            const errorData = JSON.parse(text);
+            throw new Error(errorData.error || 'Failed to download summary');
+          } catch {
+            throw new Error(`Server returned non-JSON response: ${text.substring(0, 50)}...`);
+          }
         }
 
         const blob = await response.blob();
@@ -515,6 +588,13 @@
       } catch (error) {
         alert('Error downloading summary: ' + error.message);
       }
+    });
+
+    modelInfoBtn.addEventListener('click', () => {
+      const selectedModel = modelSelect.value;
+      modelDescription.textContent = modelInfo[selectedModel].description;
+      modelClasses.textContent = modelInfo[selectedModel].classes;
+      modelInfoModal.style.display = 'flex';
     });
 
     // Navbar Navigation
@@ -652,7 +732,13 @@
         regionSelection.classList.remove('hidden');
         
         if (!response.ok) {
-          throw new Error('Failed to extract frame');
+          const text = await response.text();
+          try {
+            const errorData = JSON.parse(text);
+            throw new Error(errorData.error || 'Failed to extract frame');
+          } catch {
+            throw new Error(`Server returned non-JSON response: ${text.substring(0, 50)}...`);
+          }
         }
         
         const blob = await response.blob();
@@ -835,6 +921,7 @@
       formData.append('file', selectedFile);
       formData.append('media_type', mediaType);
       formData.append('entire_screen', isEntireScreen.toString());
+      formData.append('model', modelSelect.value);
       
       if (!isEntireScreen) {
         formData.append('left_line', leftLineInput.value);
@@ -850,10 +937,15 @@
         method: 'POST', 
         body: formData 
       })
-      .then(response => {
-        console.log('Upload response status:', response.status);
+      .then(async response => {
         if (!response.ok) {
-          throw new Error('Server responded with an error');
+          const text = await response.text();
+          try {
+            const errorData = JSON.parse(text);
+            throw new Error(errorData.error || 'Server responded with an error');
+          } catch {
+            throw new Error(`Server returned non-JSON response: ${text.substring(0, 50)}...`);
+          }
         }
         return response.json();
       })
@@ -862,6 +954,7 @@
           handleProcessingError(new Error(data.error));
           return;
         }
+        processedFileName = data.filename;
         statusDiv.textContent = 'Processing...';
         checkStatus(data.filename);
       })
@@ -889,14 +982,17 @@
     async function checkStatus(filename) {
       const interval = setInterval(async () => {
         try {
-          console.log('Fetching status for filename:', filename);
           const response = await fetch('/status');
-          console.log('Status response status:', response.status);
           if (!response.ok) {
-            throw new Error('Status check failed with status: ' + response.status);
+            const text = await response.text();
+            try {
+              const errorData = JSON.parse(text);
+              throw new Error(errorData.error || 'Status check failed with status: ' + response.status);
+            } catch {
+              throw new Error(`Server returned non-JSON response: ${text.substring(0, 50)}...`);
+            }
           }
           const statusData = await response.json();
-          console.log('Status data:', statusData);
 
           progressFill.style.width = statusData.progress + '%';
           progressPercentage.textContent = Math.round(statusData.progress) + '%';
@@ -907,94 +1003,128 @@
 
           // Estimate time remaining
           const currentTime = new Date();
-          const elapsedTime = (currentTime - startTime) / 1000; // in seconds
-          const progressPercent = statusData.progress;
-          
-          if (progressPercent > 0 && progressPercent < 100) {
-            estimatedTotalTime = (elapsedTime / (progressPercent / 100)) - elapsedTime;
-            const timeRemaining = Math.max(0, estimatedTotalTime);
-            estimatedTimeDiv.textContent = `Estimated time remaining: ${formatTime(timeRemaining)}`;
+          const elapsedTime = (currentTime - startTime) / 1000; // seconds
+          if (statusData.progress > 0 && statusData.progress < 100) {
+            if (!estimatedTotalTime) {
+              estimatedTotalTime = (elapsedTime / (statusData.progress / 100));
+            }
+            const remainingTime = estimatedTotalTime - elapsedTime;
+            estimatedTimeDiv.textContent = `Estimated time remaining: ${formatTime(remainingTime)}`;
             
-            const completionTime = new Date(currentTime.getTime() + (timeRemaining * 1000));
-            expectedCompletionDiv.textContent = `Expected completion by: ${formatDateTime(completionTime)}`;
-          } else {
-            estimatedTimeDiv.textContent = 'Estimated time remaining: Calculating...';
-            expectedCompletionDiv.textContent = '';
+            const completionTime = new Date(currentTime.getTime() + remainingTime * 1000);
+            expectedCompletionDiv.textContent = `Expected completion: ${formatDateTime(completionTime)}`;
           }
-          
+
           if (statusData.status === 'complete') {
-            console.log('Status is complete, fetching results for:', filename);
             clearInterval(interval);
+            loader.style.display = 'none';
+            progressContainer.classList.add('hidden');
+            results.classList.remove('hidden');
+            liveCounter.classList.add('hidden');
+            
             const resultsResponse = await fetch(`/get-results/${filename}`);
-            console.log('Results response status:', resultsResponse.status);
             if (!resultsResponse.ok) {
-              throw new Error('Results fetch failed with status: ' + resultsResponse.status);
+              const text = await resultsResponse.text();
+              try {
+                const errorData = JSON.parse(text);
+                throw new Error(errorData.error || 'Failed to fetch results');
+              } catch {
+                throw new Error(`Server returned non-JSON response: ${text.substring(0, 50)}...`);
+              }
             }
             const resultsData = await resultsResponse.json();
-            console.log('Results data:', resultsData);
             if (resultsData.error) {
-              handleProcessingError(new Error(resultsData.error));
-              return;
+              throw new Error(resultsData.error);
             }
-            handleProcessingSuccess(resultsData);
+
+            displayResults(resultsData);
           } else if (statusData.status === 'error') {
-            console.log('Status is error:', statusData.summary.error);
             clearInterval(interval);
-            handleProcessingError(new Error(statusData.summary.error));
-          } else {
-            statusDiv.textContent = `Processing... (${Math.round(statusData.progress)}%)`;
+            handleProcessingError(new Error(statusData.summary.error || 'Processing failed'));
           }
         } catch (error) {
-          console.error('Error in checkStatus:', error);
           clearInterval(interval);
           handleProcessingError(error);
         }
       }, 1000);
     }
 
-    function handleProcessingSuccess(data) {
-      isProcessing = false;
-      progressContainer.classList.add('hidden');
-      results.classList.remove('hidden');
-      loader.style.display = 'none';
-      
-      mediaContainer.innerHTML = '';
-      if (mediaType === 'image') {
-        const imgElement = document.createElement('img');
-        imgElement.src = data.processed_media_url;
-        imgElement.className = 'w-full';
-        mediaContainer.appendChild(imgElement);
+    function updateLiveCounter(counts) {
+      liveCounts = counts;
+      counterContent.innerHTML = '';
+      for (const [vehicle, count] of Object.entries(liveCounts)) {
+        const p = document.createElement('p');
+        p.textContent = `${vehicle}: ${count}`;
+        counterContent.appendChild(p);
       }
-      
+    }
+
+    function displayResults(data) {
+      // Show processed image if mediaType is image
+      if (mediaType === 'image' && data.download_url) {
+        resultImage.src = data.download_url;
+        resultImageContainer.classList.remove('hidden');
+      } else {
+        resultImageContainer.classList.add('hidden');
+      }
+
       summaryTableBody.innerHTML = '';
+
       data.summary.forEach(item => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${item.vehicle_class}</td>
-          <td>${item.count}</td>
-          ${mediaType === 'video' ? `<td>${item.average_speed ? item.average_speed.toFixed(1) : 'N/A'}</td>` : ''}
-        `;
-        summaryTableBody.appendChild(row);
-        
-        if (mediaType === 'video') {
-          liveCounts[item.vehicle_class] = item.count;
+        if (item.count > 0) { // Only show classes with counts
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${item.vehicle_class}</td>
+            <td>${item.count}</td>
+            ${item.average_speed !== undefined ? `<td>${item.average_speed.toFixed(1)}</td>` : ''}
+          `;
+          summaryTableBody.appendChild(row);
         }
       });
-      
-      updateLiveCounter(liveCounts);
-      downloadLink.href = data.download_url;
-      downloadLink.download = selectedFile.name.replace(/\.[^/.]+$/, '') + '_processed.' + (mediaType === 'video' ? 'mp4' : 'jpg');
+
+      if (mediaType === 'image' || isEntireScreen) {
+        speedHeader.classList.add('hidden');
+      } else {
+        speedHeader.classList.remove('hidden');
+      }
+
+      // Set download link
+      if (data.download_url && processedFileName) {
+        downloadMediaLink.href = data.download_url;
+        downloadMediaLink.download = `processed_${mediaType === 'image' ? 'image.jpg' : 'video.mp4'}`;
+      } else {
+        downloadMediaLink.classList.add('hidden');
+      }
     }
 
     function handleProcessingError(error) {
       isProcessing = false;
       progressContainer.classList.add('hidden');
-      loader.style.display = 'none';
-      alert('Error processing file: ' + error.message);
+      liveCounter.classList.add('hidden');
+      alert('Error during processing: ' + error.message);
       resetInterface();
     }
 
+    startNewBtn.addEventListener('click', () => {
+      resetInterface();
+    });
+
     function resetInterface() {
+      isProcessing = false;
+      selectedFile = null;
+      mediaType = null;
+      liveCounts = {};
+      points = [];
+      isDrawingPolygon = false;
+      if (firstFrameUrl) {
+        URL.revokeObjectURL(firstFrameUrl);
+        firstFrameUrl = null;
+      }
+      isEntireScreen = false;
+      startTime = null;
+      estimatedTotalTime = null;
+      processedFileName = null;
+
       selectionScreen.classList.remove('hidden');
       imageUpload.classList.add('hidden');
       videoUpload.classList.add('hidden');
@@ -1002,37 +1132,20 @@
       progressContainer.classList.add('hidden');
       results.classList.add('hidden');
       liveCounter.classList.add('hidden');
-      speedHeader.classList.add('hidden');
-      
-      selectedFile = null;
-      mediaType = null;
-      isProcessing = false;
-      points = [];
-      liveCounts = {};
-      firstFrameUrl = null;
-      previewCanvas.width = 0;
-      previewCanvas.height = 0;
-      polygonPointsContainer.innerHTML = '';
+      summaryTableBody.innerHTML = '';
+      progressFill.style.width = '0%';
+      progressPercentage.textContent = '0%';
+      estimatedTimeDiv.textContent = 'Estimated time remaining: Calculating...';
+      expectedCompletionDiv.textContent = '';
       navHome.classList.add('active');
       navImage.classList.remove('active');
-      navImage.classList.remove('disabled');
       navVideo.classList.remove('active');
-      navVideo.classList.remove('disabled');
-      isEntireScreen = false;
-      startTime = null;
-      estimatedTotalTime = null;
+      navImage.classList.add('disabled');
+      navVideo.classList.add('disabled');
+      speedHeader.classList.add('hidden');
+      resultImageContainer.classList.add('hidden');
+      downloadMediaLink.classList.remove('hidden');
     }
-
-    function updateLiveCounter(counts) {
-      counterContent.innerHTML = '';
-      for (const [vehicleClass, count] of Object.entries(counts)) {
-        const div = document.createElement('div');
-        div.textContent = `${vehicleClass}: ${count}`;
-        counterContent.appendChild(div);
-      }
-    }
-
-    startNewBtn.addEventListener('click', resetInterface);
   </script>
 </body>
 </html>

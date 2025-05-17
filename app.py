@@ -18,6 +18,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -45,25 +47,66 @@ logger = logging.getLogger(__name__)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 logger.info(f"Using device: {device}")
 
-# Load YOLO model
-try:
-    model_path = os.path.join(MODEL_FOLDER, 'yolo12_100epoch.pt')
-    model = YOLO(model_path).to(device)
-except Exception as e:
-    logger.error(f"Failed to load YOLO model: {str(e)}")
-    raise e
+# Model configurations
+MODEL_CONFIGS = {
+    'standard': {
+        'name': 'Standard YOLO12x Model',
+        'path': os.path.join(MODEL_FOLDER, 'yolo12x.pt'),
+        'classes': ['car', 'motorcycle', 'truck', 'bus', 'bicycle'],
+        'description': 'Standard YOLO12x model with 4 classes: Car, Motorcycle, Truck, Bus.'
+    },
+    'customized': {
+        'name': 'Customized Model with 9 Classes (built upon YOLO12n)',
+        'path': os.path.join(MODEL_FOLDER, 'yolo12_100epoch.pt'),
+        'classes': [
+            'Auto-Rickshaw', 'Bicycle', 'Bus', 'Car', 'Cycle_rickshaw',
+            'E-Rickshaw', 'Motorcycle', 'Tractor', 'Truck'
+        ],
+        'description': 'Customized model built upon YOLO12n with 9 classes: Auto-Rickshaw, Bicycle, Bus, Car, Cycle_rickshaw, E-Rickshaw, Motorcycle, Tractor, Truck.'
+    }
+}
 
-# Class names and IDs
-SELECTED_CLASS_NAMES = [
-    'Auto-Rickshaw', 'Bicycle', 'Bus', 'Car', 'Cycle_rickshaw',
-    'E-Rickshaw', 'Motorcycle', 'Tractor', 'Truck'
-]
-name_to_id = {name: id for id, name in model.model.names.items()}
-SELECTED_CLASS_IDS = [name_to_id[cls] for cls in SELECTED_CLASS_NAMES if cls in name_to_id]
-logger.info(f"Selected Class IDs: {SELECTED_CLASS_IDS}")
+# Load models with validation and fallback
+models = {}
+for model_key, config in MODEL_CONFIGS.items():
+    model_path = config['path']
+    # Check if the model file exists
+    if not os.path.isfile(model_path):
+        logger.error(f"Model file not found: {model_path}")
+        continue
+    
+    # Check if the file is readable
+    try:
+        with open(model_path, 'rb') as f:
+            pass
+        logger.info(f"Model file {model_path} is accessible")
+    except Exception as e:
+        logger.error(f"Cannot access model file {model_path}: {str(e)}")
+        continue
+
+    # Attempt to load the model
+    try:
+        models[model_key] = YOLO(model_path).to(device)
+        logger.info(f"Successfully loaded {config['name']} from {model_path}")
+    except Exception as e:
+        logger.error(f"Failed to load {config['name']}: {str(e)}")
+        continue
+
+# Ensure at least one model is loaded
+if not models:
+    logger.error("No models were loaded successfully. Cannot start the application.")
+    raise RuntimeError("No models available to run the application.")
 
 # Global state
-progress = {'status': 'idle', 'progress': 0, 'summary': {}, 'live_counts': {}, 'entire_screen': False}
+progress = {
+    'status': 'idle',
+    'progress': 0,
+    'summary': {},
+    'live_counts': {},
+    'entire_screen': False,
+    'selected_model': 'customized' if 'customized' in models else list(models.keys())[0]
+}
+
 lock = threading.Lock()
 
 # Annotators
@@ -157,6 +200,11 @@ def upload_file():
         logger.error(f"Invalid media_type: {media_type}")
         return jsonify({'error': 'Invalid media_type'}), 400
 
+    selected_model = request.form.get('model', progress['selected_model'])
+    if selected_model not in models:
+        logger.error(f"Invalid model selection: {selected_model}. Available models: {list(models.keys())}")
+        return jsonify({'error': f"Invalid model selection: {selected_model}"}), 400
+
     # Log the entire form data for debugging
     logger.debug(f"Received form data: {request.form}")
 
@@ -188,7 +236,8 @@ def upload_file():
 
     # Log input parameters for debugging
     logger.debug(f"Upload inputs: media_type={media_type}, entire_screen={entire_screen}, "
-                 f"left_line={left_line}, start_line={start_line}, end_line={end_line}, distance={distance}")
+                 f"left_line={left_line}, start_line={start_line}, end_line={end_line}, distance={distance}, "
+                 f"selected_model={selected_model}")
 
     file_path = os.path.join(UPLOAD_FOLDER, file.filename)
     file.save(file_path)
@@ -200,23 +249,29 @@ def upload_file():
             'progress': 0,
             'summary': {},
             'live_counts': {},
-            'entire_screen': entire_screen
+            'entire_screen': entire_screen,
+            'selected_model': selected_model
         }
 
     thread = threading.Thread(
         target=process_media,
-        args=(file_path, media_type, left_line, start_line, end_line, distance, output_filename)
+        args=(file_path, media_type, left_line, start_line, end_line, distance, output_filename, selected_model)
     )
     thread.start()
 
-    logger.info(f"Started processing {media_type}: {file.filename}")
+    logger.info(f"Started processing {media_type}: {file.filename} with model {selected_model}")
     return jsonify({'filename': output_filename})
 
-def process_media(file_path, media_type, left_line, start_line, end_line, distance, output_filename):
+def process_media(file_path, media_type, left_line, start_line, end_line, distance, output_filename, selected_model):
     global progress
     try:
+        model = models[selected_model]
+        class_names = MODEL_CONFIGS[selected_model]['classes']
+        name_to_id = {name: id for id, name in model.model.names.items()}
+        selected_class_ids = [name_to_id[cls] for cls in class_names if cls in name_to_id]
+
         if media_type == 'image':
-            summary = process_image(file_path, left_line, start_line, end_line)
+            summary = process_image(file_path, left_line, start_line, end_line, model, selected_class_ids)
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             cv2.imwrite(output_path, summary['image'])
             with lock:
@@ -225,10 +280,11 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                     'progress': 100,
                     'summary': summary['counts'],
                     'live_counts': {},
-                    'entire_screen': progress['entire_screen']
+                    'entire_screen': progress['entire_screen'],
+                    'selected_model': selected_model
                 }
         else:
-            summary = process_video(file_path, left_line, start_line, end_line, distance, output_filename)
+            summary = process_video(file_path, left_line, start_line, end_line, distance, output_filename, model, selected_class_ids)
             summary['video_writer'].release()
             with lock:
                 progress = {
@@ -236,9 +292,10 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                     'progress': 100,
                     'summary': summary['counts'],
                     'live_counts': summary['live_counts'],
-                    'entire_screen': progress['entire_screen']
+                    'entire_screen': progress['entire_screen'],
+                    'selected_model': selected_model
                 }
-        logger.info(f"Completed processing {media_type}: {file_path}")
+        logger.info(f"Completed processing {media_type}: {file_path} with model {selected_model}")
     except Exception as e:
         logger.error(f"Processing error for {file_path}: {str(e)}")
         with lock:
@@ -247,7 +304,8 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
                 'progress': 0,
                 'summary': {'error': str(e)},
                 'live_counts': {},
-                'entire_screen': False
+                'entire_screen': False,
+                'selected_model': selected_model
             }
     finally:
         if os.path.exists(file_path):
@@ -257,7 +315,7 @@ def process_media(file_path, media_type, left_line, start_line, end_line, distan
             except Exception as e:
                 logger.warning(f"Failed to unlink file {file_path}: {str(e)}")
 
-def process_image(image_path, left_line, start_line, end_line):
+def process_image(image_path, left_line, start_line, end_line, model, selected_class_ids):
     """Process an image to count vehicles, zone-free for entire screen or with LineZone."""
     with lock:
         entire_screen = progress['entire_screen']
@@ -272,7 +330,7 @@ def process_image(image_path, left_line, start_line, end_line):
     height, width = image.shape[:2]
     results = model(image, verbose=False, device=device)[0]
     detections = sv.Detections.from_ultralytics(results)
-    detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
+    detections = detections[np.isin(detections.class_id, selected_class_ids)]
 
     # Apply confidence threshold
     conf_mask = detections.confidence > CONFIDENCE_THRESHOLD
@@ -346,7 +404,7 @@ def process_image(image_path, left_line, start_line, end_line):
     logger.debug(f"Image processed, entire_screen={entire_screen}, counts: {dict(counts)}")
     return {'image': annotated_image, 'counts': {k: {'count': v} for k, v in counts.items()}}
 
-def process_video(video_path, left_line, start_line, end_line, distance, output_filename):
+def process_video(video_path, left_line, start_line, end_line, distance, output_filename, model, selected_class_ids):
     """Process a video to count vehicles, zone-free for entire screen or with LineZone."""
     global progress
     with lock:
@@ -392,7 +450,7 @@ def process_video(video_path, left_line, start_line, end_line, distance, output_
 
         results = model(frame, verbose=False, device=device)[0]
         detections = sv.Detections.from_ultralytics(results)
-        detections = detections[np.isin(detections.class_id, SELECTED_CLASS_IDS)]
+        detections = detections[np.isin(detections.class_id, selected_class_ids)]
 
         # Apply confidence threshold
         conf_mask = detections.confidence > CONFIDENCE_THRESHOLD
@@ -634,6 +692,9 @@ def download_summary():
             logger.error("Processing not complete for summary download")
             return jsonify({'error': 'Processing not complete'}), 400
 
+        selected_model = progress.get('selected_model', 'customized')
+        model_info = MODEL_CONFIGS[selected_model]
+
         summary_list = []
         entire_screen = progress.get('entire_screen', False)
         for vehicle_class, data in progress['summary'].items():
@@ -649,81 +710,115 @@ def download_summary():
     df = pd.DataFrame(summary_list)
 
     if format_type == 'excel':
-        # Generate Excel file
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Traffic Summary', index=False, startrow=2)
-            # Access the workbook and worksheet to add the heading
-            workbook = writer.book
-            worksheet = workbook['Traffic Summary']
-            worksheet['A1'] = 'Traffic Management Detections'
-            worksheet['A1'].font = writer.book.add_format({'bold': True, 'font_size': 16})
-            # Adjust column widths
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = max_length + 2
-                worksheet.column_dimensions[column_letter].width = adjusted_width
+        try:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Traffic Summary', index=False, startrow=2)
+                workbook = writer.book
+                worksheet = workbook['Traffic Summary']
+                
+                # Add title
+                title_cell = worksheet['A1']
+                title_cell.value = 'Traffic Management Detections'
+                title_cell.font = Font(bold=True, size=16)
+                title_cell.alignment = Alignment(horizontal='center')
+                
+                # Merge cells for the title
+                worksheet.merge_cells('A1:B1') if len(df.columns) == 2 else worksheet.merge_cells('A1:C1')
+                
+                # Adjust column widths
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = get_column_letter(column[0].column)
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = max_length + 2
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                
+                # Style the header row
+                header_row = 3  # Row 3 (1-based) because startrow=2 (0-based) in to_excel
+                for cell in worksheet[header_row]:
+                    cell.font = Font(bold=True)
+                    cell.alignment = Alignment(horizontal='center')
+                
+                # Center-align all data cells
+                for row in worksheet.iter_rows(min_row=header_row + 1, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column):
+                    for cell in row:
+                        cell.alignment = Alignment(horizontal='center')
 
-        output.seek(0)
-        logger.info("Generated Excel summary for download")
-        return send_file(
-            output,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name='traffic_summary.xlsx'
-        )
+            output.seek(0)
+            logger.info("Generated Excel summary for download")
+            return send_file(
+                output,
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                as_attachment=True,
+                download_name='traffic_summary.xlsx'
+            )
+        except Exception as e:
+            logger.error(f"Error generating Excel: {str(e)}")
+            return jsonify({'error': f'Failed to generate Excel: {str(e)}'}), 500
 
     else:  # format_type == 'pdf'
-        # Generate PDF file
-        output = io.BytesIO()
-        doc = SimpleDocTemplate(output, pagesize=letter)
-        elements = []
+        try:
+            output = io.BytesIO()
+            doc = SimpleDocTemplate(output, pagesize=letter)
+            elements = []
 
-        # Define styles
-        styles = getSampleStyleSheet()
-        title_style = styles['Heading1']
-        title_style.alignment = 1  # Center
+            styles = getSampleStyleSheet()
+            title_style = styles['Heading1']
+            title_style.alignment = 1
+            body_style = styles['BodyText']
+            body_style.fontSize = 12
 
-        # Add heading
-        elements.append(Paragraph("Traffic Management Detections", title_style))
-        elements.append(Spacer(1, 12))
+            elements.append(Paragraph("Traffic Management Detections", title_style))
+            elements.append(Spacer(1, 12))
 
-        # Prepare table data
-        table_data = [list(df.columns)]  # Headers
-        for _, row in df.iterrows():
-            table_data.append(list(row))
+            elements.append(Paragraph(f"Model Used: {model_info['name']}", body_style))
+            elements.append(Paragraph(f"Description: {model_info['description']}", body_style))
+            elements.append(Paragraph(f"Classes: {', '.join(model_info['classes'])}", body_style))
+            elements.append(Spacer(1, 24))
 
-        # Create table
-        table = Table(table_data)
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black),
-        ]))
+            table_data = [list(df.columns)]
+            for _, row in df.iterrows():
+                table_data.append(list(row))
 
-        elements.append(table)
-        doc.build(elements)
+            table = Table(table_data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 14),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('FONTSIZE', (0, 1), (-1, -1), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BOX', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 10),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
 
-        output.seek(0)
-        logger.info("Generated PDF summary for download")
-        return send_file(
-            output,
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name='traffic_summary.pdf'
-        )
+            elements.append(table)
+            doc.build(elements)
+
+            output.seek(0)
+            logger.info("Generated PDF summary for download")
+            return send_file(
+                output,
+                mimetype='application/pdf',
+                as_attachment=True,
+                download_name='traffic_summary.pdf'
+            )
+        except Exception as e:
+            logger.error(f"Error generating PDF: {str(e)}")
+            return jsonify({'error': f'Failed to generate PDF: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)
